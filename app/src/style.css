@@ -1,0 +1,162 @@
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body,
+#app {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+html {
+	font-size: clamp(13px, 1.4vmin, 20px);
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	font-family: "Nunito", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+	color: #3a2c1f;
+	background: #101b12;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: manipulation;
+}
+
+button {
+	font-family: inherit;
+	border: none;
+	background: none;
+	cursor: pointer;
+	color: inherit;
+}
+
+button:disabled {
+	cursor: not-allowed;
+}
+
+img {
+	display: block;
+	-webkit-user-drag: none;
+}
+
+input {
+	font-family: inherit;
+}
+
+.full {
+	position: absolute;
+	inset: 0;
+}
+
+.glass {
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.42) 50%, rgba(255, 255, 255, 0.58) 100%);
+	border: 1px solid rgba(255, 255, 255, 0.6);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 4px 16px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.1);
+	backdrop-filter: blur(6px);
+	-webkit-backdrop-filter: blur(6px);
+}
+
+.title-font {
+	font-family: "Lilita One", "Arial Black", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+@keyframes fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes rise-in {
+	from {
+		opacity: 0;
+		transform: translateY(1.2rem);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes pulse-glow {
+	0%,
+	100% {
+		filter: drop-shadow(0 0 0.2rem rgba(217, 119, 6, 0.12));
+	}
+	50% {
+		filter: drop-shadow(0 0 1rem rgba(217, 119, 6, 0.35));
+	}
+}
+
+@keyframes banner-in {
+	from {
+		clip-path: inset(0 100% 0 0);
+	}
+	to {
+		clip-path: inset(0 0 0 0);
+	}
+}
+
+@keyframes banner-out {
+	from {
+		clip-path: inset(0 0 0 0);
+	}
+	to {
+		clip-path: inset(0 0 0 100%);
+	}
+}
+
+@keyframes float-up {
+	0% {
+		opacity: 0;
+		transform: translateY(0.8rem);
+	}
+	100% {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.fade-enter-active,
+.fade-leave-active {
+	transition: opacity 0.25s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+	opacity: 0;
+}
+
+.pop-enter-active {
+	transition: all 0.25s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.pop-leave-active {
+	transition: all 0.2s ease;
+}
+
+.pop-enter-from,
+.pop-leave-to {
+	opacity: 0;
+	transform: translateY(0.8rem) scale(0.97);
+}
+
+::-webkit-scrollbar {
+	width: 0.45rem;
+	height: 0.45rem;
+}
+
+::-webkit-scrollbar-thumb {
+	background: rgba(0, 0, 0, 0.2);
+	border-radius: 0.25rem;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}

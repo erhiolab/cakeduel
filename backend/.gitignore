@@ -1,0 +1,12 @@
+# 构建产物
+*.exe
+.go-cache/
+
+# 运行数据
+logs/
+data/
+tmp/
+
+# IDE
+.idea/
+.vscode/

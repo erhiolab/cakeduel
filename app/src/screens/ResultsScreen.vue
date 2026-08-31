@@ -1,0 +1,186 @@
+<script setup lang="ts">
+import {computed} from "vue"
+import {game} from "../composables/useGame"
+
+// 游戏状态
+const {state, rematch, leave} = game
+
+// 游戏结果
+const won = computed(() => state.view?.gameEnded?.winner === state.playerIndex)
+
+// 我的胜利次数
+const myWins = computed(() => state.view?.boutWinners.filter((w) => w === state.playerIndex).length ?? 0)
+
+// 对手胜利次数
+const oppWins = computed(() => state.view?.boutWinners.filter((w) => w !== state.playerIndex).length ?? 0)
+
+// 我的名称
+const myName = computed(() => state.players.find((p) => p.index === state.playerIndex)?.name || "你")
+
+// 对手名称
+const oppName = computed(() => state.players.find((p) => p.index === 1 - state.playerIndex)?.name || "对手")
+</script>
+
+<template>
+	<div class="results" data-cakeduel-screen="results">
+		<img class="bg" src="/cakeduel/playmat.jpg" alt="" draggable="false"/>
+		<div class="overlay"></div>
+		<div class="content">
+			<div class="card" :class="{ win: won, lose: !won }">
+				<img class="trophy" :src="won ? '/cakeduel/trophy.png' : '/cakeduel/token-cake.png'" alt=""/>
+				<h1 class="title-font">{{ won ? "你赢了！" : "你输了" }}</h1>
+				<p class="sub">{{ won ? `击败了 ${oppName}` : `输给了 ${oppName}` }}</p>
+				<div class="score">
+					<div class="score-item">
+						<span>{{ myName }}</span>
+						<b>{{ myWins }}</b>
+					</div>
+					<span class="vs">:</span>
+					<div class="score-item">
+						<span>{{ oppName }}</span>
+						<b>{{ oppWins }}</b>
+					</div>
+				</div>
+				<button class="again" @click="rematch">再来一场</button>
+				<button class="menu" @click="leave">返回主菜单</button>
+			</div>
+		</div>
+	</div>
+</template>
+
+<style scoped>
+.results {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.bg {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.overlay {
+	position: absolute;
+	inset: 0;
+	background: rgba(20, 30, 40, 0.5);
+	box-shadow: inset 0 0 6rem 1.5rem rgba(30, 45, 60, 0.6);
+}
+
+.content {
+	position: relative;
+	z-index: 10;
+	width: 100%;
+	max-width: 24rem;
+	padding: 1rem;
+}
+
+.card {
+	border-radius: 1.1rem;
+	padding: 1.8rem 1.5rem;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.7rem;
+	text-align: center;
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+	border: 1px solid rgba(255, 255, 255, 0.8);
+	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+	backdrop-filter: blur(8px);
+	animation: rise-in 0.4s ease both;
+}
+
+.card.win {
+	border-top: 0.35rem solid #34d399;
+}
+
+.card.lose {
+	border-top: 0.35rem solid #f87171;
+}
+
+.trophy {
+	width: 4rem;
+	height: 4rem;
+	object-fit: contain;
+	filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+}
+
+.card h1 {
+	font-size: 1.8rem;
+	color: #3a2c1f;
+}
+
+.sub {
+	font-size: 0.9rem;
+	color: #7a6a55;
+	font-weight: 600;
+}
+
+.score {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	margin: 0.5rem 0;
+}
+
+.score-item {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.2rem;
+}
+
+.score-item span {
+	font-size: 0.75rem;
+	font-weight: 700;
+	color: #7a6a55;
+}
+
+.score-item b {
+	font-size: 2.2rem;
+	color: #3a2c1f;
+}
+
+.vs {
+	font-size: 1.4rem;
+	font-weight: 900;
+	color: #b9a58c;
+}
+
+.again {
+	width: 100%;
+	border-radius: 0.85rem;
+	padding: 0.9rem;
+	background: linear-gradient(135deg, #f5c54a, #e8a23a);
+	color: #3a2c1f;
+	font-weight: 900;
+	font-size: 1rem;
+	box-shadow: 0 6px 20px rgba(232, 162, 58, 0.35);
+	transition: transform 0.15s;
+}
+
+.again:hover {
+	transform: scale(1.02);
+}
+
+.menu {
+	width: 100%;
+	padding: 0.55rem;
+	border-radius: 0.7rem;
+	font-size: 0.85rem;
+	font-weight: 700;
+	color: #6b5438;
+	transition: background 0.2s;
+}
+
+.menu:hover {
+	background: rgba(0, 0, 0, 0.05);
+}
+</style>

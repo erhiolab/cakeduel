@@ -1,0 +1,73 @@
+# 蛋糕对决服务器配置
+gateway:
+    # 监听端口
+    port: 8080
+    # 数据路径
+    data-path: "data"
+    # 临时路径
+    temp-path: "tmp"
+    # 前端静态资源路径(可留空以关闭)
+    static-path: "../app/dist"
+    # 本地缓存过期时间(分钟)
+    local-cache-expire: 10
+
+# 日志配置
+logger:
+    # 日志输出方式 (both, file, console)
+    output: "both"
+    # 日志级别 (debug, info, warn, error)
+    level: "info"
+    # 系统日志文件路径
+    log-path: "logs/cakeduel.log"
+    # 请求日志文件路径
+    request-log-path: "logs/request.log"
+    # 日志文件最大大小(MB)
+    max-size: 100
+    # 日志文件最大备份数量
+    max-backups: 10
+    # 日志文件最大年龄(天)
+    max-age: 30
+    # 是否压缩日志文件
+    compress: true
+
+# Redis配置(可选, 连不上时自动降级为本地缓存)
+redis:
+    # 主机地址
+    host: "localhost"
+    # 端口
+    port: 6379
+    # 密码
+    password: ""
+    # 库索引
+    db: 0
+    # 项目前缀
+    project-prefix: "cakeduel"
+    # 连接池大小
+    pool-size: 50
+    # 最小空闲连接数
+    min-idle-connections: 2
+    # 连接最大空闲时间(分钟)
+    connection-max-idle-time: 15
+    # 连接超时时间(秒)
+    dial-timeout: 3
+    # 读取超时时间(秒)
+    read-timeout: 3
+    # 写入超时时间(秒)
+    write-timeout: 3
+
+# 游戏配置
+game:
+    # 先赢几局获胜
+    rounds-to-win: 3
+    # 加入牌堆的特殊卡数量(11 表示加入全部特殊卡; 调小则每局随机抽部分)
+    special-cards-to-add: 11
+    # 初始手牌上限
+    starting-hand-limit: 4
+    # 房间码长度
+    room-code-length: 6
+    # 随机匹配等待队列过期时间(分钟)
+    matchmaking-timeout-minutes: 60
+    # 每回合倒计时(秒), 超时自动过牌, 防止挂机
+    turn-timeout-seconds: 60
+    # 断线重连宽容期(秒), 掉线后保留席位等待重连
+    disconnect-grace-seconds: 45
