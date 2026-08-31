@@ -2,4 +2,4 @@
 package version
 
 // Version 当前版本号(x.y.z, 不带 v 前缀)
-const Version = "0.0.0"
+const Version = "0.1.0"
