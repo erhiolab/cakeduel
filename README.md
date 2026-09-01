@@ -168,19 +168,6 @@ cakeduel/
 └── README.md
 ```
 
-## 测试
-
-```bash
-cd backend
-go test ./...            # 引擎单元测试
-node smoke_test.mjs      # 双客户端 WebSocket 冒烟
-node e2e_test.mjs        # 完整对局 + 再来一局 + 随机匹配
-node ui_test.mjs         # 无头 Chrome UI 自动化(桌面/移动横竖屏)
-node chat_test.mjs       # 局内聊天收发
-node turn_timeout_test.mjs  # 回合倒计时自动过牌(需用 CAKEDUEL_TURN_TIMEOUT=3 启动后端)
-node reconnect_test.mjs  # 断线重连: 掉线暂停 -> 同 token 重连恢复
-```
-
 ## 鸣谢
 
 - 原版游戏与玩法设计：[I_Nori](https://www.bilibili.com/video/BV1h8uq6SECj)
