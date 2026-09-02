@@ -41,8 +41,8 @@ const compact = computed(() => viewport.value.h < 700 || viewport.value.w < 960)
 // 卡片尺寸
 const cardHeight = computed(() => {
 	const H = viewport.value.h
-	const BASE = compact.value ? H * 0.22 : H * 0.21
-	return Math.round(Math.max(compact.value ? 84 : 96, Math.min(compact.value ? 150 : 185, BASE)))
+	const BASE = compact.value ? H * 0.17 : H * 0.21
+	return Math.round(Math.max(compact.value ? 58 : 96, Math.min(compact.value ? 120 : 185, BASE)))
 })
 
 // 卡片宽度
@@ -96,6 +96,12 @@ const onHover = (card: CardEntity | null) => {
 	}, 180)
 }
 
+// 顶部状态栏卡牌预览(桌面悬浮/移动长按)
+const onClaimPreview = (name: string | null) => {
+	if (previewTimer) window.clearTimeout(previewTimer)
+	previewCard.value = name ? {entityId: -1, name} : null
+}
+
 onMounted(() => {
 	window.addEventListener("resize", onResize)
 })
@@ -127,23 +133,28 @@ onUnmounted(() => {
 					对局已暂停，等待对方重连…
 				</div>
 			</Transition>
-			<TopHud :on-help="() => (showHelp = true)"/>
+			<TopHud :on-help="() => (showHelp = true)" :on-card-preview="onClaimPreview"/>
 			<div class="table">
 				<Transition name="fade">
 					<div v-if="state.reveal" class="table-dim"></div>
 				</Transition>
 				<div class="center">
-					<div class="opp-area">
-						<CardFan
-							:cards="oppHand"
+				<div class="opp-area">
+					<CardFan
+						v-if="!compact"
+						:cards="oppHand"
 							:face-up="false"
 							:inverted="true"
 							:disabled="true"
 							:card-width="cardWidth"
 							:card-height="oppCardHeight"
 							:overlap="Math.round(cardWidth * 0.42)"
-						/>
+					/>
+					<div v-else-if="oppHand.length > 0" class="opp-hand-compact">
+						<img src="/cakeduel/card-back-hd.jpg" alt=""/>
+						<span>对手 {{ oppHand.length }} 张</span>
 					</div>
+				</div>
 					<div class="piles-area">
 						<PilesView
 							:card-width="cardWidth"
@@ -252,14 +263,20 @@ onUnmounted(() => {
 }
 
 .side.left {
-  position: absolute;
-  left: 0.5rem;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 15;
-  height: 68vh;
-  max-height: 44rem;
-  min-height: 20rem;
+	position: absolute;
+	left: 0.5rem;
+	top: 50%;
+	transform: translateY(-50%);
+	z-index: 15;
+	height: 68vh;
+	max-height: 44rem;
+	min-height: 20rem;
+}
+
+.game.compact .side.left {
+	height: 52vh;
+	min-height: 8rem;
+	max-height: 17rem;
 }
 
 .side.right {
@@ -283,6 +300,27 @@ onUnmounted(() => {
 	flex-shrink: 0;
 }
 
+.opp-hand-compact {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.35rem 0.8rem;
+	border-radius: 0.7rem;
+	background: rgba(0, 0, 0, 0.3);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	color: rgba(255, 255, 255, 0.85);
+	font-size: 0.85rem;
+	font-weight: 800;
+	white-space: nowrap;
+}
+
+.opp-hand-compact img {
+	height: 3.4rem;
+	width: auto;
+	border-radius: 0.25rem;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
 .piles-area {
 	flex-shrink: 0;
 }
@@ -292,6 +330,10 @@ onUnmounted(() => {
 	padding: 0.3rem 0.8rem 0.6rem;
 	position: relative;
 	z-index: 30;
+}
+
+.game.compact .hand-area {
+	padding: 0.15rem 0.5rem 0.35rem;
 }
 
 .hand-label {
@@ -308,6 +350,25 @@ onUnmounted(() => {
 .hint-text {
 	font-weight: 500;
 	opacity: 0.6;
+}
+
+.game.compact .hand-label {
+	display: none;
+}
+
+.game.compact .center {
+	gap: 0.25rem;
+}
+
+.game.compact .opp-hand-compact {
+	padding: 0.2rem 0.5rem;
+	gap: 0.35rem;
+	font-size: 0.72rem;
+	border-radius: 0.5rem;
+}
+
+.game.compact .opp-hand-compact img {
+	height: 2.3rem;
 }
 
 .conn-banner {

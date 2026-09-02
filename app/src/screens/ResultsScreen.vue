@@ -19,6 +19,25 @@ const myName = computed(() => state.players.find((p) => p.index === state.player
 
 // 对手名称
 const oppName = computed(() => state.players.find((p) => p.index === 1 - state.playerIndex)?.name || "对手")
+
+// 我是否已同意再来一局
+const mineVoted = computed(() => state.rematchVotes[state.playerIndex])
+
+// 对方是否已同意再来一局
+const oppVoted = computed(() => state.rematchVotes[1 - state.playerIndex])
+
+// 再来一局按钮文案
+const againText = computed(() => {
+	if (mineVoted) return "等待对方同意…"
+	return "再来一场"
+})
+
+// 再来一局提示文案
+const againHint = computed(() => {
+	if (mineVoted) return "已同意，等待对方确认后开始新一局"
+	if (oppVoted) return "对方已同意再来一局，点击「再来一场」开始"
+	return "需要双方都同意后才会开始新一局"
+})
 </script>
 
 <template>
@@ -41,7 +60,8 @@ const oppName = computed(() => state.players.find((p) => p.index === 1 - state.p
 						<b>{{ oppWins }}</b>
 					</div>
 				</div>
-				<button class="again" @click="rematch">再来一场</button>
+				<button class="again" :disabled="mineVoted" @click="rematch">{{ againText }}</button>
+				<p class="again-hint">{{ againHint }}</p>
 				<button class="menu" @click="leave">返回主菜单</button>
 			</div>
 		</div>
@@ -170,6 +190,16 @@ const oppName = computed(() => state.players.find((p) => p.index === 1 - state.p
 	transform: scale(1.02);
 }
 
+.again:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.again-hint {
+	font-size: 0.7rem;
+	color: #9a7a55;
+}
+
 .menu {
 	width: 100%;
 	padding: 0.55rem;
@@ -182,5 +212,39 @@ const oppName = computed(() => state.players.find((p) => p.index === 1 - state.p
 
 .menu:hover {
 	background: rgba(0, 0, 0, 0.05);
+}
+
+@media (max-width: 600px) {
+	.content {
+		padding: 0.5rem;
+	}
+
+	.card {
+		padding: 1.1rem 0.9rem;
+		gap: 0.5rem;
+		border-radius: 0.9rem;
+	}
+
+	.trophy {
+		width: 3rem;
+		height: 3rem;
+	}
+
+	.card h1 {
+		font-size: 1.4rem;
+	}
+
+	.sub {
+		font-size: 0.8rem;
+	}
+
+	.score-item b {
+		font-size: 1.7rem;
+	}
+
+	.again {
+		padding: 0.7rem;
+		font-size: 0.9rem;
+	}
 }
 </style>

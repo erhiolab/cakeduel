@@ -445,4 +445,45 @@ const waiting = computed(() => state.view != null && !state.yourTurn && !state.v
 		box-shadow: 0 0 0 9px rgba(232, 199, 58, 0), 0 4px 14px rgba(245, 197, 24, 0.2);
 	}
 }
+
+@media (max-height: 640px) {
+	.action-bar {
+		padding-bottom: 0.1rem;
+	}
+
+	.panel {
+		gap: 0.25rem;
+		padding: 0.35rem 0.5rem;
+		border-radius: 0.7rem;
+		min-width: 0;
+		max-width: 30rem;
+	}
+
+	.btn {
+		gap: 0;
+		padding: 0.3rem 0.7rem;
+		border-radius: 0.6rem;
+		font-size: 0.72rem;
+	}
+
+	.btn-sub {
+		display: none;
+	}
+
+	.hint,
+	.or-row,
+	.mini-label {
+		display: none;
+	}
+
+	.pill {
+		padding: 0.2rem 0.6rem;
+		font-size: 0.7rem;
+	}
+
+	.waiting {
+		padding: 0.4rem 1rem;
+		font-size: 0.75rem;
+	}
+}
 </style>

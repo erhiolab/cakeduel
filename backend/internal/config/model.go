@@ -41,10 +41,11 @@ type gameConfig struct {
 	RoundsToWin               int `yaml:"rounds-to-win"`
 	SpecialCardsToAdd         int `yaml:"special-cards-to-add"`
 	StartingHandLimit         int `yaml:"starting-hand-limit"`
-	RoomCodeLength            int `yaml:"room-code-length"`
-	MatchmakingTimeoutMinutes int `yaml:"matchmaking-timeout-minutes"`
-	TurnTimeoutSeconds        int `yaml:"turn-timeout-seconds"`
-	DisconnectGraceSeconds    int `yaml:"disconnect-grace-seconds"`
+	RoomCodeLength            int    `yaml:"room-code-length"`
+	MatchmakingTimeoutSeconds int    `yaml:"matchmaking-timeout-seconds"`
+	MatchmakingStorage        string `yaml:"matchmaking-storage"`
+	TurnTimeoutSeconds        int    `yaml:"turn-timeout-seconds"`
+	DisconnectGraceSeconds    int    `yaml:"disconnect-grace-seconds"`
 }
 
 // Config 配置

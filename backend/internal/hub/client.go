@@ -144,6 +144,7 @@ type ServerMessage struct {
 	YourTurn    bool           `json:"yourTurn,omitempty"`
 	GameOver    bool           `json:"gameOver,omitempty"`
 	Paused      bool           `json:"paused,omitempty"`
+	RematchVotes [2]bool       `json:"rematchVotes,omitempty"`
 	Message     string         `json:"message,omitempty"`
 	Connected   []bool         `json:"connected,omitempty"`
 }

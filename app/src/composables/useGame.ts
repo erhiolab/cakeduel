@@ -168,6 +168,7 @@ interface State {
 	paused: boolean
 	connectionLost: boolean
 	opponentStatus: "online" | "offline"
+	rematchVotes: [boolean, boolean]
 }
 
 // 游戏状态
@@ -197,6 +198,7 @@ const state = reactive<State>({
 	paused: false,
 	connectionLost: false,
 	opponentStatus: "online",
+	rematchVotes: [false, false],
 })
 
 // 通知定时器
@@ -251,10 +253,12 @@ export const useGame = () => {
 	 */
 	const getSessionToken = (): string => {
 		const KEY = "cakeduel_session"
-		let TOKEN = localStorage.getItem(KEY)
+		// 用 sessionStorage: 刷新页面保留(token 不变可重连),
+		// 但不同标签页相互隔离, 避免同浏览器双开共用 token 导致席位/状态串扰
+		let TOKEN = sessionStorage.getItem(KEY)
 		if (!TOKEN) {
 			TOKEN = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
-			localStorage.setItem(KEY, TOKEN)
+			sessionStorage.setItem(KEY, TOKEN)
 		}
 		return TOKEN
 	}
@@ -362,6 +366,9 @@ export const useGame = () => {
 				state.players = msg.players || []
 				showToast("对方已重连, 对局继续")
 				break
+			case "rematch_status":
+				state.rematchVotes = msg.rematchVotes || [false, false]
+				break
 			case "matching":
 				state.matching = true
 				state.message = msg.message || "正在匹配对手…"
@@ -422,6 +429,11 @@ export const useGame = () => {
 		state.yourTurn = msg.yourTurn
 		state.paused = !!msg.paused
 		state.connectionLost = false
+		// 以服务端视角校准玩家身份, 防止公网延迟/重连等场景下 playerIndex 漂移
+		// 导致横幅胜负判断与实际结果不一致
+		if (msg.view?.me?.index != null) {
+			state.playerIndex = msg.view.me.index
+		}
 		// 对局开始/重连恢复/再来一局: 进入对局界面
 		state.screen = "game"
 		// 质疑翻开动画
@@ -532,7 +544,8 @@ export const useGame = () => {
 				}
 				break
 			case "bout_ended": {
-				const meWon = evt.winner === state.playerIndex
+				// 最后一局时与结算判定同源(gameEnded.winner), 其余局用事件 winner
+				const meWon = (state.view?.gameEnded?.winner ?? evt.winner) === state.playerIndex
 				playSfx("roundResult")
 				const banner = {
 					id: evt.id,
@@ -727,6 +740,7 @@ export const useGame = () => {
 		state.paused = false
 		state.connectionLost = false
 		state.opponentStatus = "online"
+		state.rematchVotes = [false, false]
 	}
 
 	/**

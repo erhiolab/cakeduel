@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import {computed, ref, watch, onUnmounted} from "vue"
+import {computed, ref, watch, onMounted, onUnmounted} from "vue"
 import {game} from "../composables/useGame"
-import {playSfx} from "../game/audio"
+import {audioState, playSfx, toggleBgm} from "../game/audio"
+import {appConfig} from "../config"
 import HelpOverlay from "../components/HelpOverlay.vue"
 
 // 房间状态
 const {state, createRoom, joinRoom, leave, clearMessage} = game
 
-// 玩家状态
-const name = ref("")
+// 玩家昵称(本地缓存, 避免每次重新输入)
+const NAME_KEY = "cakeduel_name"
+const name = ref(localStorage.getItem(NAME_KEY) ?? "")
+
+// 昵称变更时写入本地缓存
+watch(name, (v) => {
+	if (v) localStorage.setItem(NAME_KEY, v)
+})
 
 // 视图状态
 const view = ref<"menu" | "create" | "join">("menu")
@@ -27,6 +34,41 @@ const matchElapsed = ref(0)
 
 // 匹配定时器
 let matchTimer: number | undefined
+
+// 服务器健康检查地址(与 WS 同源/同后端)
+const PING_BASE = (() => {
+	const CFG = appConfig.wsUrl
+	if (CFG) {
+		return CFG.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://").replace(/\/+$/, "")
+	}
+	if (import.meta.env.DEV) return "http://127.0.0.1:8080"
+	return window.location.origin
+})()
+
+// 服务器是否异常
+const serverDown = ref(false)
+
+// 健康检查定时器
+let pingTimer: number | undefined
+
+// 检查服务器状态(3 秒超时)
+const checkServer = async () => {
+	const CONTROLLER = new AbortController()
+	const TIMER = window.setTimeout(() => CONTROLLER.abort(), 3000)
+	try {
+		const RES = await fetch(`${PING_BASE}/ping`, {cache: "no-store", signal: CONTROLLER.signal})
+		serverDown.value = !RES.ok
+	} catch {
+		serverDown.value = true
+	} finally {
+		window.clearTimeout(TIMER)
+	}
+}
+
+onMounted(() => {
+	checkServer()
+	pingTimer = window.setInterval(checkServer, 15000)
+})
 
 watch(() => state.matching, (v) => {
 	if (matchTimer) window.clearInterval(matchTimer)
@@ -80,6 +122,7 @@ const doJoin = () => {
 
 onUnmounted(() => {
 	if (matchTimer) window.clearInterval(matchTimer)
+	if (pingTimer) window.clearInterval(pingTimer)
 })
 </script>
 
@@ -87,7 +130,22 @@ onUnmounted(() => {
 	<div class="start" data-cakeduel-screen="start">
 		<img class="bg" src="/cakeduel/playmat.jpg" alt="" draggable="false"/>
 		<div class="overlay"></div>
-		<button class="help-btn" @click="showHelp = true">?</button>
+		<div class="top-btns">
+			<button class="music-btn" :class="{ muted: !audioState.bgmOn }" title="背景音乐开关" @click="toggleBgm">
+				<svg v-if="audioState.bgmOn" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+					<path d="M9 18V5l12-2v13"/>
+					<circle cx="6" cy="18" r="3"/>
+					<circle cx="18" cy="16" r="3"/>
+				</svg>
+				<svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+					 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M9 18V5l12-2v13"/>
+					<circle cx="6" cy="18" r="3"/>
+					<path d="M16 8l5 5M21 8l-5 5"/>
+				</svg>
+			</button>
+			<button class="help-btn" @click="showHelp = true">?</button>
+		</div>
 		<div class="content">
 			<div class="title-block">
 				<h1 class="title-font">蛋糕对决</h1>
@@ -150,6 +208,7 @@ onUnmounted(() => {
 				</template>
 			</div>
 		</div>
+		<p v-if="serverDown" class="server-warning">服务器状态异常, 请联系管理员</p>
 		<HelpOverlay :open="showHelp" @close="showHelp = false"/>
 	</div>
 </template>
@@ -181,11 +240,18 @@ onUnmounted(() => {
 	box-shadow: inset 0 0 6rem 1.5rem rgba(30, 45, 60, 0.6);
 }
 
-.help-btn {
+.top-btns {
 	position: absolute;
 	top: 1.2rem;
 	right: 1.2rem;
 	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.help-btn,
+.music-btn {
 	width: 2.2rem;
 	height: 2.2rem;
 	border-radius: 50%;
@@ -196,11 +262,20 @@ onUnmounted(() => {
 	font-size: 1rem;
 	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 	transition: transform 0.15s, box-shadow 0.2s;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
-.help-btn:hover {
+.help-btn:hover,
+.music-btn:hover {
 	transform: scale(1.08);
 	box-shadow: 0 0 16px rgba(240, 200, 120, 0.5);
+}
+
+.music-btn.muted {
+	color: rgba(245, 223, 174, 0.45);
+	border-color: rgba(240, 200, 120, 0.2);
 }
 
 .content {
@@ -362,6 +437,23 @@ onUnmounted(() => {
 	color: #b45309;
 }
 
+.server-warning {
+	position: absolute;
+	bottom: 0.8rem;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 30;
+	padding: 0.5rem 1rem;
+	border-radius: 0.6rem;
+	background: rgba(127, 29, 29, 0.9);
+	border: 1px solid rgba(248, 113, 113, 0.5);
+	color: #fecaca;
+	font-size: 0.85rem;
+	font-weight: 800;
+	text-align: center;
+	animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
 .matching {
 	align-items: center;
 	padding: 1rem 0 0.4rem;
@@ -406,5 +498,51 @@ onUnmounted(() => {
 	color: #9a7a55;
 	font-weight: 700;
 	margin-bottom: 0.4rem;
+}
+
+@media (max-height: 560px) and (min-width: 640px) {
+	.content {
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		gap: 2.5rem;
+		max-width: 52rem;
+		padding: 0.5rem 1.5rem;
+	}
+
+	.title-block {
+		flex: 1;
+		text-align: left;
+		margin-bottom: 0;
+		padding-left: 1rem;
+	}
+
+	.title-block h1 {
+		font-size: clamp(2rem, 6vh, 3.2rem);
+	}
+
+	.subtitle {
+		font-size: 0.8rem;
+		margin-top: 0.25rem;
+	}
+
+	.panel {
+		flex: 1;
+		max-width: 21rem;
+		padding: 0.9rem;
+	}
+
+	.main-btn {
+		padding: 0.55rem 1rem;
+		font-size: 0.95rem;
+	}
+
+	.main-btn small {
+		font-size: 0.62rem;
+	}
+
+	.menu {
+		gap: 0.55rem;
+	}
 }
 </style>

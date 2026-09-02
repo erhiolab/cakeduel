@@ -26,14 +26,20 @@ func New() *App {
 
 	// 初始化游戏房间中心
 	gc := config.Get().Game
+	// 注意: InitRedis 失败时返回 nil 指针, 赋给接口会变成"非 nil 的空接口",
+	// 这里显式转成真正的 nil 接口, 避免 hub 中 h.rdb == nil 判断失效
+	var cmdable redis.Cmdable
+	if rdb != nil {
+		cmdable = rdb
+	}
 	gameHub := hub.NewHub(game.GameConfig{
 		RoundsToWin:        gc.RoundsToWin,
 		SpecialCardsToAdd:  gc.SpecialCardsToAdd,
 		StartingHandLimit:  gc.StartingHandLimit,
 		TurnTimeoutSeconds: gc.TurnTimeoutSeconds,
-	}, rdb)
+	}, cmdable)
 	gameHub.SetRoomCodeLen(gc.RoomCodeLength)
-	gameHub.SetMatchTimeout(time.Duration(gc.MatchmakingTimeoutMinutes) * time.Minute)
+	gameHub.SetMatchTimeout(time.Duration(gc.MatchmakingTimeoutSeconds) * time.Second)
 	gameHub.SetDisconnectGrace(time.Duration(gc.DisconnectGraceSeconds) * time.Second)
 
 	return &App{

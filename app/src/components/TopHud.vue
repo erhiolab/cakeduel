@@ -1,14 +1,43 @@
 <script setup lang="ts">
-import {computed} from "vue"
+import {computed, ref} from "vue"
 import {game} from "../composables/useGame"
 import {CARDS, cardSmallImage} from "../game/cards"
+import {audioState, toggleBgm} from "../game/audio"
+
+// 认输二次确认的自动取消时间(ms)
+const CONCEDE_CONFIRM_TIMEOUT_MS = 3000
 
 const props = defineProps<{
 	onHelp: () => void
+	onCardPreview?: (name: string | null) => void
 }>()
 
 // 状态
-const {state} = game
+const {state, act} = game
+
+// 是否已确认认输
+const concedeArmed = ref(false)
+
+// 认输确认自动取消定时器
+let concedeTimer: number | undefined
+
+// 对局进行中且未暂停时可认输
+const canConcede = computed(() => !!state.view && !state.view.gameEnded && !state.paused)
+
+// 认输(需二次确认, 防止误触)
+const doConcede = () => {
+	if (!concedeArmed.value) {
+		concedeArmed.value = true
+		if (concedeTimer) window.clearTimeout(concedeTimer)
+		concedeTimer = window.setTimeout(() => {
+			concedeArmed.value = false
+		}, CONCEDE_CONFIRM_TIMEOUT_MS)
+		return
+	}
+	if (concedeTimer) window.clearTimeout(concedeTimer)
+	concedeArmed.value = false
+	act({type: "concede"})
+}
 
 // 玩家名称
 const myName = computed(() => state.players.find((p) => p.index === state.playerIndex)?.name || "你")
@@ -51,12 +80,55 @@ const myWins = computed(() => state.view?.boutWinners.filter((w) => w === state.
 
 // 对手胜利次数
 const oppWins = computed(() => state.view?.boutWinners.filter((w) => w !== state.playerIndex).length ?? 0)
+
+// 长按预览定时器(移动端)
+let pressTimer: number | undefined
+
+// 桌面: 悬浮立即预览
+const hoverPreview = () => {
+	if (pressTimer) window.clearTimeout(pressTimer)
+	props.onCardPreview?.(currentClaim.value?.claim ?? null)
+}
+
+// 离开清除预览
+const leavePreview = () => {
+	if (pressTimer) window.clearTimeout(pressTimer)
+	props.onCardPreview?.(null)
+}
+
+// 移动端: 长按 500ms 后显示大图
+const pressStart = () => {
+	if (pressTimer) window.clearTimeout(pressTimer)
+	pressTimer = window.setTimeout(() => {
+		props.onCardPreview?.(currentClaim.value?.claim ?? null)
+	}, 500)
+}
+
+// 松开/移出取消长按
+const pressEnd = () => {
+	if (pressTimer) window.clearTimeout(pressTimer)
+	pressTimer = undefined
+	props.onCardPreview?.(null)
+}
 </script>
 
 <template>
 	<div class="hud">
 		<div class="hud-inner" :class="{ mine: state.yourTurn }">
 			<div class="hud-left">
+				<button class="music-btn" :class="{ muted: !audioState.bgmOn }" title="背景音乐开关" @click="toggleBgm">
+					<svg v-if="audioState.bgmOn" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+						<path d="M9 18V5l12-2v13"/>
+						<circle cx="6" cy="18" r="3"/>
+						<circle cx="18" cy="16" r="3"/>
+					</svg>
+					<svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+						 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M9 18V5l12-2v13"/>
+						<circle cx="6" cy="18" r="3"/>
+						<path d="M16 8l5 5M21 8l-5 5"/>
+					</svg>
+				</button>
 				<button class="help-btn" @click="props.onHelp">
 					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"
 						 stroke-linecap="round">
@@ -66,6 +138,9 @@ const oppWins = computed(() => state.view?.boutWinners.filter((w) => w !== state
 					</svg>
 					规则
 				</button>
+				<button v-if="canConcede" class="concede-btn" :class="{ armed: concedeArmed }" @click="doConcede">
+					{{ concedeArmed ? "确认认输？" : "认输" }}
+				</button>
 			</div>
 			<div class="hud-center">
 				<div class="status-pill" :class="{ active: state.yourTurn }">
@@ -74,7 +149,14 @@ const oppWins = computed(() => state.view?.boutWinners.filter((w) => w !== state
 						<div v-if="currentClaim" :key="`${currentClaim.claim}-${currentClaim.cardCount}`"
 							 class="claim-chip">
 							<div class="divider"></div>
-							<img :src="cardSmallImage(currentClaim.claim)" :alt="currentClaim.claim"/>
+							<img
+								:src="cardSmallImage(currentClaim.claim)"
+								:alt="currentClaim.claim"
+								@pointerenter="hoverPreview"
+								@pointerleave="leavePreview"
+								@pointerdown="pressStart"
+								@pointerup="pressEnd"
+							/>
 							<div class="claim-text">
 								<span class="claim-who">{{ claimOwner }}声明了</span>
 								<span class="claim-name">
@@ -146,6 +228,58 @@ const oppWins = computed(() => state.view?.boutWinners.filter((w) => w !== state
 .help-btn:hover {
 	background: rgba(255, 255, 255, 0.16);
 	color: #fff;
+}
+
+.hud-left {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.music-btn {
+	width: 1.8rem;
+	height: 1.8rem;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: rgba(255, 255, 255, 0.7);
+	background: rgba(255, 255, 255, 0.08);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	transition: background 0.2s, color 0.2s;
+}
+
+.music-btn:hover {
+	background: rgba(255, 255, 255, 0.16);
+	color: #fff;
+}
+
+.music-btn.muted {
+	color: rgba(255, 255, 255, 0.35);
+}
+
+.concede-btn {
+	display: flex;
+	align-items: center;
+	border-radius: 2rem;
+	background: rgba(220, 38, 38, 0.16);
+	border: 1px solid rgba(248, 113, 113, 0.35);
+	padding: 0.35rem 0.8rem;
+	color: #fca5a5;
+	font-size: 0.75rem;
+	font-weight: 700;
+	transition: background 0.2s, color 0.2s;
+}
+
+.concede-btn:hover {
+	background: rgba(220, 38, 38, 0.3);
+	color: #fff;
+}
+
+.concede-btn.armed {
+	background: rgba(220, 38, 38, 0.85);
+	color: #fff;
+	animation: pulse-glow 1s ease-in-out infinite;
 }
 
 .hud-center {

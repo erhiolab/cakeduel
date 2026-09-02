@@ -22,7 +22,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="app-root" @pointerdown="handleFirstClick">
+	<div class="app-root" @pointerdown="handleFirstClick" @contextmenu.prevent>
 		<StartScreen v-if="state.screen === 'start'" key="start"/>
 		<LobbyScreen v-else-if="state.screen === 'lobby'" key="lobby"/>
 		<GameScreen v-else-if="state.screen === 'game'" key="game"/>
@@ -38,4 +38,5 @@ onMounted(() => {
 	position: relative;
 	overflow: hidden;
 }
+
 </style>

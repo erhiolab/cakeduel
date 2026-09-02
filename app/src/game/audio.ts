@@ -1,3 +1,5 @@
+import {reactive} from "vue"
+
 // 音频管理
 const BASE = "/audio/cakeduel"
 
@@ -21,12 +23,17 @@ let bgm: HTMLAudioElement | null = null
 // 启用音频管理
 let enabled = false
 
+// 背景音乐开关状态(供界面按钮显示)
+export const audioState = reactive({
+	bgmOn: true,
+})
+
 /**
  * 启用音频
  */
 export const enableAudio = () => {
 	enabled = true
-	playBgm()
+	if (audioState.bgmOn) playBgm()
 }
 
 /**
@@ -67,5 +74,17 @@ export const stopBgm = () => {
 	if (bgm) {
 		bgm.pause()
 		bgm = null
+	}
+}
+
+/**
+ * 切换背景音乐播放/暂停
+ */
+export const toggleBgm = () => {
+	audioState.bgmOn = !audioState.bgmOn
+	if (audioState.bgmOn) {
+		playBgm()
+	} else {
+		stopBgm()
 	}
 }

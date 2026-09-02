@@ -4,7 +4,6 @@ import (
 	"cakeduel-backend/internal/game"
 	"cakeduel-backend/internal/logger"
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -13,8 +12,7 @@ import (
 )
 
 const (
-	redisMatchQueueKey = "cakeduel:match_queue"
-	redisOnlinePrefix  = "cakeduel:online:"
+	redisOnlinePrefix = "cakeduel:online:"
 )
 
 // Hub 房间中心
@@ -97,24 +95,41 @@ func (h *Hub) registerClient(c *Client) {
 	h.clientsByToken[c.Token] = c
 }
 
-// markOnline 刷新 Redis 在线标记(Redis 不可用时忽略)
+// markOnline 异步刷新 Redis 在线标记(不阻塞主流程, Redis 不可用时忽略)
 func (h *Hub) markOnline(c *Client) {
 	if h.rdb == nil || c.Token == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = h.rdb.Set(ctx, redisOnlinePrefix+c.Token, c.Name, 60*time.Second).Err()
+	token, name := c.Token, c.Name
+	go func() {
+		defer func() {
+			// 防御: Redis 异常时不应拖垮整个进程
+			if r := recover(); r != nil {
+				logger.Log.Warn("Redis 在线标记写入异常", zap.Any("panic", r))
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = h.rdb.Set(ctx, redisOnlinePrefix+token, name, 2*time.Minute).Err()
+	}()
 }
 
-// unmarkOnline 清除在线标记
+// unmarkOnline 异步清除在线标记
 func (h *Hub) unmarkOnline(c *Client) {
 	if h.rdb == nil || c.Token == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = h.rdb.Del(ctx, redisOnlinePrefix+c.Token).Err()
+	token := c.Token
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Log.Warn("Redis 在线标记清除异常", zap.Any("panic", r))
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = h.rdb.Del(ctx, redisOnlinePrefix+token).Err()
+	}()
 }
 
 // HandleMessage 处理客户端消息
@@ -184,25 +199,16 @@ func (h *Hub) CreateRoom(c *Client, msg *ClientMessage) {
 	}
 
 	if mode == "random" {
-		// 尝试配对(优先 Redis 队列, Redis 不可用时用内存队列)
-		var waiter *Client
-		if h.rdb != nil {
-			waiter = h.popRedisMatch(c)
-		} else {
-			waiter = h.popMemoryMatch(c)
-		}
+		// 尝试与等待中的随机玩家配对(内存队列, 单实例稳定)
+		waiter := h.popMemoryMatch(c)
 		if waiter != nil {
 			h.pairRandom(c, waiter)
 			return
 		}
 		// 进入等待队列
 		c.matching = true
-		if h.rdb != nil {
-			h.pushRedisMatch(c)
-		} else {
-			h.matching = append(h.matching, c)
-		}
-		c.Send(ServerMessage{Type: "matching", Message: "正在匹配对手…"})
+		h.matching = append(h.matching, c)
+		c.Send(ServerMessage{Type: "matching", Message: "正在匹配对手^"})
 		go h.matchTimeoutChecker(c)
 		return
 	}
@@ -231,44 +237,6 @@ func (h *Hub) popMemoryMatch(self *Client) *Client {
 		return waiter
 	}
 	return nil
-}
-
-// popRedisMatch 从 Redis 队列取等待者(跨实例/无效元素直接丢弃)
-func (h *Hub) popRedisMatch(self *Client) *Client {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	for i := 0; i < 10; i++ {
-		raw, err := h.rdb.RPop(ctx, redisMatchQueueKey).Result()
-		if err != nil {
-			return nil
-		}
-		var entry struct {
-			Token string `json:"token"`
-			Name  string `json:"name"`
-		}
-		if json.Unmarshal([]byte(raw), &entry) != nil || entry.Token == "" || entry.Token == self.Token {
-			continue
-		}
-		// 对方必须在线
-		if h.rdb.Exists(ctx, redisOnlinePrefix+entry.Token).Val() == 0 {
-			continue
-		}
-		if w, ok := h.clientsByToken[entry.Token]; ok && w.room == nil && !w.disconnected && w != self {
-			w.matching = false
-			return w
-		}
-		// 不在本实例(多实例部署)或状态异常: 丢弃
-	}
-	return nil
-}
-
-// pushRedisMatch 写入 Redis 匹配队列与在线标记
-func (h *Hub) pushRedisMatch(c *Client) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	data, _ := json.Marshal(map[string]string{"token": c.Token, "name": c.Name})
-	_ = h.rdb.LPush(ctx, redisMatchQueueKey, data).Err()
-	_ = h.rdb.Set(ctx, redisOnlinePrefix+c.Token, c.Name, 60*time.Second).Err()
 }
 
 // pairRandom 随机匹配配对(需持有 hub 锁)
@@ -408,8 +376,21 @@ func (h *Hub) Rematch(c *Client) {
 		c.sendError("对局尚未结束")
 		return
 	}
-	logger.Log.Info("收到再来一局", zap.String("room", room.Code))
-	room.startGame()
+	// 记录本方同意; 双方都同意才开新局
+	room.rematchVotes[c.playerIndex] = true
+	if room.rematchVotes[0] && room.rematchVotes[1] {
+		logger.Log.Info("双方同意再来一局", zap.String("room", room.Code))
+		room.startGame()
+		h.mu.Unlock()
+		return
+	}
+	// 广播当前投票状态
+	votes := room.rematchVotes
+	for _, cl := range room.Clients {
+		if cl != nil && cl.room == room {
+			cl.Send(ServerMessage{Type: "rematch_status", RematchVotes: votes})
+		}
+	}
 	h.mu.Unlock()
 }
 

@@ -103,7 +103,7 @@ func CORS(next http.Handler) http.Handler {
 // HealthCheck 健康检查中间件
 func HealthCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/ping" {
+		if r.URL.Path == "/healthz" {
 			utils.Success(w, map[string]any{"status": "ok"})
 			return
 		}

@@ -21,6 +21,7 @@ type Room struct {
 	mu          sync.Mutex
 	turnTimer   *time.Timer
 	disconnectTimer *time.Timer
+	rematchVotes    [2]bool
 }
 
 // paused 对局是否暂停(任一方掉线等待重连)
@@ -58,6 +59,7 @@ func (r *Room) addClient(c *Client, index int) {
 func (r *Room) removeClient(c *Client) {
 	r.stopTurnTimer()
 	r.stopDisconnectTimer()
+	r.rematchVotes = [2]bool{}
 	index := c.playerIndex
 	if r.Clients[index] == c {
 		r.Clients[index] = nil
@@ -99,6 +101,7 @@ func (r *Room) removeClient(c *Client) {
 func (r *Room) closeAll(reason string) {
 	r.stopTurnTimer()
 	r.stopDisconnectTimer()
+	r.rematchVotes = [2]bool{}
 	for _, c := range r.Clients {
 		if c != nil {
 			c.Send(ServerMessage{Type: "room_closed", Reason: reason})
@@ -156,6 +159,7 @@ func (r *Room) waitForStart() {
 
 // startGame 开始新对局(需持有 hub 锁)
 func (r *Room) startGame() {
+	r.rematchVotes = [2]bool{}
 	seed := rand.Uint32()
 	cfg := r.Hub.gameConfig
 	state, events, err := game.NewGame(cfg, seed)

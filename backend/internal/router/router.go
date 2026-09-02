@@ -19,6 +19,9 @@ func New(app *app.App) *Router {
 
 // Register 注册路由
 func Register(r *Router, app *app.App) {
+	// 健康检查
+	r.handleFunc(http.MethodGet, "/ping", PingHandler())
+
 	// 游戏 WebSocket
 	r.handleFunc(http.MethodGet, "/ws", GameWSHandler(app))
 

@@ -10,3 +10,8 @@ import (
 func GameWSHandler(app *app.App) http.HandlerFunc {
 	return controller.WebSocketHandler(app)
 }
+
+// PingHandler 健康检查
+func PingHandler() http.HandlerFunc {
+	return controller.Ping()
+}

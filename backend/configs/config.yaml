@@ -65,8 +65,10 @@ game:
     starting-hand-limit: 4
     # 房间码长度
     room-code-length: 6
-    # 随机匹配等待队列过期时间(分钟)
-    matchmaking-timeout-minutes: 60
+    # 随机匹配超时上限(秒), 超时后前端提示重新匹配, 防止一直挂起
+    matchmaking-timeout-seconds: 60
+    # 匹配队列存储: memory(单实例稳定) / redis(多实例扩展, 需要 pub/sub 配套)
+    matchmaking-storage: "memory"
     # 每回合倒计时(秒), 超时自动过牌, 防止挂机
     turn-timeout-seconds: 60
     # 断线重连宽容期(秒), 掉线后保留席位等待重连
