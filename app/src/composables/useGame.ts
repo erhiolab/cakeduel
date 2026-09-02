@@ -1,11 +1,13 @@
 import {reactive, readonly} from "vue"
+import {defineStore} from "pinia"
 import {playSfx} from "../game/audio"
 import {appConfig} from "../config"
+import {pinia} from "../stores/pinia"
 
 /**
  * 游戏界面类型
  */
-export type Screen = "start" | "lobby" | "game" | "results"
+export type Screen = "start" | "lobby" | "game" | "results" | "spectate"
 
 /**
  * 玩家信息
@@ -107,11 +109,54 @@ export interface Zones {
 }
 
 /**
+ * 观战视角(不含任何一方手牌)
+ */
+export interface SpectatorViewMsg {
+	frame: number
+	phase: string
+	attackerIndex: number
+	roundNumber: number
+	boutWinners: readonly number[]
+	gameEnded: { winner: number } | null
+	config: { roundsToWin: number; specialCardsToAdd: number; startingHandLimit: number; turnTimeoutSeconds: number }
+	lastAttackPassed: boolean
+	paused: boolean
+	players: readonly { index: number; cakes: number; handCount: number }[]
+	attackingClaim: ClaimMsg | null
+	blockingClaim: ClaimMsg | null
+}
+
+/**
  * 揭示消息
  */
 export interface RevealMsg {
 	pile: string
-	cards: CardEntity[]
+	cards: readonly CardEntity[]
+}
+
+/**
+ * 回放单帧
+ */
+export interface ReplayFrame {
+	view: SpectatorViewMsg
+	zones: Zones
+	events: GameEvent[]
+	reveal?: RevealMsg
+}
+
+/**
+ * 对局回放数据
+ */
+export interface ReplayData {
+	roomCode: string
+	mode: string
+	playerNames: [string, string]
+	startedAt: number
+	durationMs: number
+	winner: number
+	deckConfig: Record<string, number>
+	roundsToWin: number
+	frames: ReplayFrame[]
 }
 
 /**
@@ -147,6 +192,7 @@ interface State {
 	socket: WebSocket | null
 	connected: boolean
 	roomCode: string
+	mode: string
 	playerIndex: number
 	players: PlayerInfo[]
 	matching: boolean
@@ -169,6 +215,9 @@ interface State {
 	connectionLost: boolean
 	opponentStatus: "online" | "offline"
 	rematchVotes: [boolean, boolean]
+	deckConfig: Record<string, number> | null
+	spectator: boolean
+	spectatorView: SpectatorViewMsg | null
 }
 
 // 游戏状态
@@ -177,6 +226,7 @@ const state = reactive<State>({
 	socket: null,
 	connected: false,
 	roomCode: "",
+	mode: "",
 	playerIndex: 0,
 	players: [],
 	matching: false,
@@ -199,6 +249,9 @@ const state = reactive<State>({
 	connectionLost: false,
 	opponentStatus: "online",
 	rematchVotes: [false, false],
+	deckConfig: null,
+	spectator: false,
+	spectatorView: null,
 })
 
 // 通知定时器
@@ -221,6 +274,12 @@ let countdownTimer: number | undefined
 
 // 重连定时器
 let reconnectTimer: number | undefined
+
+// 回放存储键名
+const REPLAYS_KEY = "cakeduel_replays"
+
+// 本地最多保存的回放数量
+const MAX_SAVED_REPLAYS = 10
 
 // 待处理通知 ID 集合
 const pendingBanners = new Set<number>()
@@ -245,9 +304,82 @@ const showToast = (text: string) => {
 }
 
 /**
+ * 读取本地保存的回放列表(新的在前)
+ */
+const readReplays = (): ReplayData[] => {
+	try {
+		const RAW = localStorage.getItem(REPLAYS_KEY)
+		if (!RAW) return []
+		const LIST = JSON.parse(RAW)
+		return Array.isArray(LIST) ? (LIST as ReplayData[]) : []
+	} catch {
+		return []
+	}
+}
+
+/**
+ * 加载本地保存的回放列表
+ */
+export const loadSavedReplays = (): ReplayData[] => readReplays()
+
+/**
+ * 删除本地保存的一份回放
+ * @param startedAt 回放开始时间戳(用作唯一标识)
+ */
+export const deleteSavedReplay = (startedAt: number) => {
+	const NEXT = readReplays().filter((r) => r.startedAt !== startedAt)
+	localStorage.setItem(REPLAYS_KEY, JSON.stringify(NEXT))
+}
+
+/**
+ * 保存一份回放到本地(超出上限时丢弃最旧)
+ * @param data 回放数据
+ */
+const saveReplay = (data: ReplayData) => {
+	try {
+		const LIST = readReplays().filter((r) => r.startedAt !== data.startedAt)
+		LIST.unshift(data)
+		localStorage.setItem(REPLAYS_KEY, JSON.stringify(LIST.slice(0, MAX_SAVED_REPLAYS)))
+	} catch {
+		// 存储不可用(隐私模式/超限)时静默丢弃, 不影响对局
+	}
+}
+
+/**
+ * 开始质疑翻牌动画(250ms 后翻出, 2.4s 后收起)
+ * @param revealMsg 翻开数据
+ */
+const startReveal = (revealMsg: RevealMsg) => {
+	state.pendingReveal = revealMsg
+	playSfx("challenge")
+	window.setTimeout(() => {
+		state.reveal = state.pendingReveal
+		state.revealedPileNames = {}
+		for (const CARD of state.pendingReveal?.cards || []) {
+			if (CARD.name) state.revealedPileNames[CARD.entityId] = CARD.name
+		}
+		window.setTimeout(() => {
+			state.reveal = null
+			state.pendingReveal = null
+		}, 2400)
+	}, 250)
+}
+
+/**
  * 获取会话令牌
  */
-export const useGame = () => {
+export const useGame = defineStore("game", () => {
+	// 是否在对局/房间中, 用于刷新后自动恢复连接(放在 sessionStorage, 标签页隔离)
+	const RESUME_KEY = "cakeduel_resume"
+
+	const markResume = () => {
+		sessionStorage.setItem(RESUME_KEY, "1")
+	}
+
+	const clearResume = () => {
+		sessionStorage.removeItem(RESUME_KEY)
+	}
+
 	/**
 	 * 获取会话令牌
 	 */
@@ -290,10 +422,20 @@ export const useGame = () => {
 		state.socket = WS
 		WS.onopen = () => {
 			state.connected = true
+			// 主界面且不在匹配中时不保留空闲连接标记
+			if (state.screen === "start" && !state.matching) clearResume()
 			onOpen?.()
 		}
 		WS.onclose = () => {
 			state.connected = false
+			// 观战没有可恢复的席位: 断开后直接回主界面, 不反复重连
+			if (state.screen === "spectate") {
+				clearResume()
+				resetRoom()
+				state.screen = "start"
+				state.message = "观战连接已断开"
+				return
+			}
 			// 在房间/对局/匹配中: 自动重连, 服务器按 token 恢复席位
 			if (state.screen !== "start" || state.matching) {
 				state.connectionLost = true
@@ -344,10 +486,22 @@ export const useGame = () => {
 		switch (msg.type) {
 			case "room_joined":
 				state.roomCode = msg.roomCode
-				state.playerIndex = msg.playerIndex
+				state.mode = msg.mode || ""
 				state.players = msg.players || []
+				state.deckConfig = msg.deckConfig || null
 				state.matching = false
+				markResume()
 				state.connectionLost = false
+				state.paused = false
+				if (msg.spectator) {
+					// 房间已满且对局中: 以观战身份进入
+					state.spectator = true
+					state.playerIndex = -1
+					state.screen = "spectate"
+					break
+				}
+				state.spectator = false
+				state.playerIndex = msg.playerIndex
 				state.opponentStatus = msg.players?.find((p: any) => p.index !== state.playerIndex)?.connected ? "online" : "offline"
 				state.screen = "lobby"
 				break
@@ -371,25 +525,37 @@ export const useGame = () => {
 				break
 			case "matching":
 				state.matching = true
-				state.message = msg.message || "正在匹配对手…"
+				state.message = msg.message || "正在匹配对手^"
 				break
 			case "match_timeout":
 				state.matching = false
+				clearResume()
 				state.screen = "start"
 				state.message = msg.message || "匹配超时, 请重试"
 				break
 			case "room_closed":
+				clearResume()
 				resetRoom()
 				state.screen = "start"
 				state.message = msg.reason || "房间已关闭"
 				break
 			case "opponent_left":
+				clearResume()
 				resetRoom()
 				state.screen = "start"
 				state.message = msg.reason || "对手已离开"
 				break
 			case "game_state":
 				applyGameState(msg)
+				break
+			case "spectator_state":
+				applySpectatorState(msg)
+				break
+			case "replay_data":
+				if (msg.replay) {
+					saveReplay(msg.replay as ReplayData)
+					showToast("本局回放已保存, 可在主菜单查看")
+				}
 				break
 			case "chat":
 				state.chatMessages.push({
@@ -437,21 +603,7 @@ export const useGame = () => {
 		// 对局开始/重连恢复/再来一局: 进入对局界面
 		state.screen = "game"
 		// 质疑翻开动画
-		if (msg.reveal) {
-			state.pendingReveal = msg.reveal as RevealMsg
-			playSfx("challenge")
-			window.setTimeout(() => {
-				state.reveal = state.pendingReveal
-				state.revealedPileNames = {}
-				for (const CARD of state.pendingReveal?.cards || []) {
-					if (CARD.name) state.revealedPileNames[CARD.entityId] = CARD.name
-				}
-				window.setTimeout(() => {
-					state.reveal = null
-					state.pendingReveal = null
-				}, 2400)
-			}, 250)
-		}
+		if (msg.reveal) startReveal(msg.reveal as RevealMsg)
 
 		// 事件驱动动画与音效
 		for (const EVT of EVENTS) {
@@ -473,6 +625,21 @@ export const useGame = () => {
 		} else {
 			resetCountdown()
 		}
+	}
+
+	/**
+	 * 应用观战状态(不含任何一方手牌)
+	 * @param msg 观战状态消息
+	 */
+	const applySpectatorState = (msg: any) => {
+		if (!msg.spectatorView) return
+		state.spectator = true
+		state.spectatorView = msg.spectatorView as SpectatorViewMsg
+		state.zones = msg.zones as Zones
+		state.paused = !!msg.spectatorView.paused
+		state.connectionLost = false
+		state.screen = "spectate"
+		if (msg.reveal) startReveal(msg.reveal as RevealMsg)
 	}
 
 	/**
@@ -664,9 +831,9 @@ export const useGame = () => {
 	 * @param name 房间名称
 	 * @param mode 房间模式
 	 */
-	const createRoom = (name: string, mode: "private" | "random") => {
+	const createRoom = (name: string, mode: "private" | "random", deckConfig?: Record<string, number> | null) => {
 		connect(() => {
-			send({type: "create_room", name, mode})
+			send({type: "create_room", name, mode, deckConfig: deckConfig ?? undefined})
 		})
 	}
 
@@ -708,6 +875,7 @@ export const useGame = () => {
 	 */
 	const leave = () => {
 		send({type: "leave"})
+		clearResume()
 		resetRoom()
 		state.screen = "start"
 	}
@@ -726,6 +894,7 @@ export const useGame = () => {
 		reconnectTimer = undefined
 		state.turnRemaining = 0
 		state.roomCode = ""
+		state.mode = ""
 		state.playerIndex = 0
 		state.players = []
 		state.view = null
@@ -741,6 +910,9 @@ export const useGame = () => {
 		state.connectionLost = false
 		state.opponentStatus = "online"
 		state.rematchVotes = [false, false]
+		state.deckConfig = null
+		state.spectator = false
+		state.spectatorView = null
 	}
 
 	/**
@@ -775,6 +947,6 @@ export const useGame = () => {
 		clearError: () => (state.error = ""),
 		clearMessage: () => (state.message = ""),
 	}
-}
+})
 
-export const game = useGame()
+export const game = useGame(pinia)

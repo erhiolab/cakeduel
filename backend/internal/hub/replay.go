@@ -1,0 +1,95 @@
+package hub
+
+import (
+	"cakeduel-backend/internal/game"
+	"time"
+)
+
+// MAX_REPLAY_FRAMES 单局回放最多记录的帧数(防止异常局撑爆内存)
+const MAX_REPLAY_FRAMES = 600
+
+// ReplayFrameMsg 回放的一帧(与观战视角同构, 不含任何私有手牌信息)
+type ReplayFrameMsg struct {
+	View   *SpectatorViewMsg `json:"view"`
+	Zones  *ZonesMsg         `json:"zones"`
+	Events []EventMsg        `json:"events"`
+	Reveal *RevealMsg        `json:"reveal,omitempty"`
+}
+
+// ReplayDataMsg 对局回放数据
+type ReplayDataMsg struct {
+	RoomCode    string           `json:"roomCode"`
+	Mode        string           `json:"mode"`
+	PlayerNames [2]string        `json:"playerNames"`
+	StartedAt   int64            `json:"startedAt"`
+	DurationMs  int64            `json:"durationMs"`
+	Winner      int              `json:"winner"`
+	DeckConfig  map[string]int   `json:"deckConfig"`
+	RoundsToWin int              `json:"roundsToWin"`
+	Frames      []ReplayFrameMsg `json:"frames"`
+}
+
+// recordReplayFrame 在每次状态广播时记录一帧公开状态(需持有 room 锁)
+func (r *Room) recordReplayFrame(events []game.Event, reveal *RevealMsg) {
+	s := r.Game
+	if s == nil || r.replayStarted.IsZero() || len(r.replayFrames) >= MAX_REPLAY_FRAMES {
+		return
+	}
+	// 重连补发状态等无新事件的广播不产生新帧
+	if len(events) == 0 && reveal == nil {
+		return
+	}
+	r.replayFrames = append(r.replayFrames, ReplayFrameMsg{
+		View:   buildSpectatorView(s),
+		Zones:  buildSpectatorZones(s, events),
+		Events: eventMsgsFromFiltered(game.FilterPublicEvents(events, s.CardNames)),
+		Reveal: reveal,
+	})
+}
+
+// buildReplayData 汇总当前回放数据(需持有 room 锁)
+func (r *Room) buildReplayData() *ReplayDataMsg {
+	s := r.Game
+	if s == nil || s.GameEnded == nil || r.replayStarted.IsZero() {
+		return nil
+	}
+	data := &ReplayDataMsg{
+		RoomCode:    r.Code,
+		Mode:        r.Mode,
+		StartedAt:   r.replayStarted.UnixMilli(),
+		DurationMs:  time.Since(r.replayStarted).Milliseconds(),
+		Winner:      s.GameEnded.Winner,
+		DeckConfig:  map[string]int{},
+		RoundsToWin: s.Config.RoundsToWin,
+		Frames:      append([]ReplayFrameMsg{}, r.replayFrames...),
+	}
+	for i, c := range r.Clients {
+		if c != nil {
+			data.PlayerNames[i] = c.Name
+		}
+	}
+	if r.DeckConfig != nil {
+		for k, v := range r.DeckConfig {
+			data.DeckConfig[k] = v
+		}
+	}
+	return data
+}
+
+// sendReplayData 对局结束后把回放数据推送给双方玩家
+func (r *Room) sendReplayData() {
+	if r.replaySent {
+		return
+	}
+	data := r.buildReplayData()
+	if data == nil {
+		return
+	}
+	r.replaySent = true
+	msg := ServerMessage{Type: "replay_data", Replay: data}
+	for _, c := range r.Clients {
+		if c != nil {
+			c.Send(msg)
+		}
+	}
+}

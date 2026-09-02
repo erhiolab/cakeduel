@@ -133,6 +133,23 @@ export const CARDS: Record<string, CardMeta> = {
  */
 export const CARD_KEYS = Object.keys(CARDS)
 
+// 特殊卡列表(可自定义数量)
+export const SPECIAL_CARD_NAMES = CARD_KEYS.filter((k) => !["soldier", "archer", "wizard", "defender", "scientist", "wolfy"].includes(k))
+
+// 默认经典卡组(特殊卡数量, 对应后端默认)
+export const DEFAULT_DECK: Record<string, number> = {
+	assassin: 1,
+	scout: 1,
+	summoner: 1,
+	quartermaster: 1,
+	oracle: 1,
+	priest: 2,
+	angel: 1,
+	baacrates: 1,
+	agent_u: 1,
+	pierrot: 1,
+}
+
 /**
  * 获取卡牌图片 URL
  * @param name 卡牌键名

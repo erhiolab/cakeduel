@@ -12,16 +12,21 @@ import (
 
 // Room 房间
 type Room struct {
-	Code        string
-	Mode        string
-	Hub         *Hub
-	Clients     [2]*Client
-	Game        *game.State
-	GameStarted bool
-	mu          sync.Mutex
-	turnTimer   *time.Timer
+	Code            string
+	Mode            string
+	Hub             *Hub
+	Clients         [2]*Client
+	Spectators      []*Client
+	DeckConfig      map[string]int
+	Game            *game.State
+	GameStarted     bool
+	mu              sync.Mutex
+	turnTimer       *time.Timer
 	disconnectTimer *time.Timer
 	rematchVotes    [2]bool
+	replayStarted   time.Time
+	replayFrames    []ReplayFrameMsg
+	replaySent      bool
 }
 
 // paused 对局是否暂停(任一方掉线等待重连)
@@ -45,6 +50,59 @@ func (r *Room) otherClient(c *Client) *Client {
 		}
 	}
 	return nil
+}
+
+// addSpectator 添加观战(需持有 hub 锁)
+func (r *Room) addSpectator(c *Client) {
+	r.Spectators = append(r.Spectators, c)
+	c.room = r
+	c.spectating = true
+}
+
+// removeSpectator 移除观战(需持有 hub 锁)
+func (r *Room) removeSpectator(c *Client) {
+	for i, sp := range r.Spectators {
+		if sp == c {
+			r.Spectators = append(r.Spectators[:i], r.Spectators[i+1:]...)
+			break
+		}
+	}
+	c.room = nil
+	c.spectating = false
+	c.Close()
+}
+
+// notifySpectatorsClose 通知观战房间关闭(需持有 hub 锁)
+func (r *Room) notifySpectatorsClose(reason string) {
+	for _, sp := range r.Spectators {
+		sp.Send(ServerMessage{Type: "room_closed", Reason: reason})
+		sp.room = nil
+		sp.spectating = false
+		sp.Close()
+	}
+	r.Spectators = nil
+}
+
+// broadcastSpectatorState 向观战广播公开状态(需持有 hub/room 锁)
+func (r *Room) broadcastSpectatorState(events []game.Event, reveal *RevealMsg) {
+	if len(r.Spectators) == 0 || r.Game == nil {
+		return
+	}
+	s := r.Game
+	evts := eventMsgsFromFiltered(game.FilterPublicEvents(events, s.CardNames))
+	view := buildSpectatorView(s)
+	view.Paused = r.paused()
+	zones := buildSpectatorZones(s, events)
+	msg := ServerMessage{
+		Type:          "spectator_state",
+		SpectatorView: view,
+		Zones:         zones,
+		Events:        evts,
+		Reveal:        reveal,
+	}
+	for _, sp := range r.Spectators {
+		sp.Send(msg)
+	}
 }
 
 // addClient 添加客户端(需持有 hub 锁)
@@ -77,12 +135,14 @@ func (r *Room) removeClient(c *Client) {
 	}
 	if other == nil {
 		// 房间清空
+		r.notifySpectatorsClose("对局已结束")
 		delete(r.Hub.rooms, r.Code)
 		return
 	}
 
 	if !r.GameStarted {
 		// 对局未开始, 房间关闭
+		r.notifySpectatorsClose("房间已关闭")
 		other.Send(ServerMessage{Type: "room_closed", Reason: "对手已离开房间"})
 		other.room = nil
 		other.Close()
@@ -90,7 +150,18 @@ func (r *Room) removeClient(c *Client) {
 		return
 	}
 
+	if r.Game != nil && r.Game.GameEnded != nil {
+		// 对局已自然结束, 有人离开只是关闭房间, 不再误报"对手离开你获胜"
+		r.notifySpectatorsClose("对局已结束")
+		other.Send(ServerMessage{Type: "room_closed", Reason: "对局结束, 对方已离开"})
+		other.room = nil
+		other.Close()
+		delete(r.Hub.rooms, r.Code)
+		return
+	}
+
 	// 对局中, 直接判定对手获胜
+	r.notifySpectatorsClose("对局已结束")
 	other.Send(ServerMessage{Type: "opponent_left", Reason: "对手已离开, 你获胜", LeftIndex: index})
 	other.room = nil
 	other.Close()
@@ -110,6 +181,7 @@ func (r *Room) closeAll(reason string) {
 		}
 	}
 	r.Clients = [2]*Client{}
+	r.notifySpectatorsClose(reason)
 }
 
 // playersInfo 玩家信息列表
@@ -132,8 +204,10 @@ func (r *Room) announceJoined() {
 			c.Send(ServerMessage{
 				Type:        "room_joined",
 				RoomCode:    r.Code,
+				Mode:        r.Mode,
 				PlayerIndex: i,
 				Players:     r.playersInfo(),
+				DeckConfig:  r.DeckConfig,
 			})
 		}
 	}
@@ -160,8 +234,14 @@ func (r *Room) waitForStart() {
 // startGame 开始新对局(需持有 hub 锁)
 func (r *Room) startGame() {
 	r.rematchVotes = [2]bool{}
+	r.replayStarted = time.Now()
+	r.replayFrames = nil
+	r.replaySent = false
 	seed := rand.Uint32()
 	cfg := r.Hub.gameConfig
+	if r.DeckConfig != nil {
+		cfg.DeckConfig = r.DeckConfig
+	}
 	state, events, err := game.NewGame(cfg, seed)
 	if err != nil {
 		logger.Log.Error("创建游戏失败", zap.Error(err))
@@ -251,6 +331,11 @@ func (r *Room) broadcastGameState(events []game.Event, reveal ...*RevealMsg) {
 			Paused:   r.paused(),
 		}
 		c.Send(msg)
+	}
+	r.recordReplayFrame(events, revealMsg)
+	r.broadcastSpectatorState(events, revealMsg)
+	if s.GameEnded != nil {
+		r.sendReplayData()
 	}
 	r.scheduleTurnTimer()
 }
@@ -345,7 +430,7 @@ func phasingIndex(s *game.State) int {
 func buildViewMsg(s *game.State, player int) *PlayerViewMsg {
 	view := game.GetView(s, player)
 	msg := &PlayerViewMsg{
-		Frame:         view.Frame,
+		Frame: view.Frame,
 		Me: MeMsg{
 			Index:     view.Me.Index,
 			Cakes:     view.Me.Cakes,

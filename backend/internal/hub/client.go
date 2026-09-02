@@ -16,6 +16,7 @@ type Client struct {
 	ID           string
 	Token        string
 	Name         string
+	lastActive   int64
 	conn         *websocket.Conn
 	send         chan []byte
 	hub          *Hub
@@ -23,7 +24,13 @@ type Client struct {
 	playerIndex  int
 	matching     bool
 	disconnected bool
+	spectating   bool
 	closeOnce    sync.Once
+}
+
+// touch 更新最近活动时间(读消息时调用)
+func (c *Client) touch() {
+	c.lastActive = time.Now().UnixNano()
 }
 
 // newClient 创建客户端
@@ -43,6 +50,12 @@ func (c *Client) Send(v any) {
 		logger.Log.Warn("消息序列化失败", zap.Error(err))
 		return
 	}
+	defer func() {
+		// 防御: 连接恰好关闭时向已关闭通道发送会 panic, 不应拖垮服务
+		if r := recover(); r != nil {
+			logger.Log.Warn("向已关闭连接发送消息", zap.String("client", c.ID), zap.Any("panic", r))
+		}
+	}()
 	select {
 	case c.send <- data:
 	default:
@@ -90,6 +103,7 @@ func (c *Client) readLoop() {
 		if err != nil {
 			return
 		}
+		c.touch()
 		var msg ClientMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
 			c.Send(ServerMessage{Type: "error", Message: "消息格式错误"})
@@ -101,6 +115,13 @@ func (c *Client) readLoop() {
 
 // ServeWS 处理一个 WebSocket 连接(阻塞直到断开)
 func (h *Hub) ServeWS(conn *websocket.Conn, token string) {
+	if !h.tryAcquireConn() {
+		// 连接数已满: 告知后关闭, 不占用资源
+		_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"server_busy","message":"服务器繁忙, 请稍后再试"}`))
+		_ = conn.Close()
+		return
+	}
 	c := newClient(h, conn)
 	if token == "" {
 		token = utils.RandomString(24)
@@ -126,45 +147,51 @@ func (c *Client) sendError(message string) {
 
 // ServerMessage 服务端消息
 type ServerMessage struct {
-	Type        string         `json:"type"`
-	RoomCode    string         `json:"roomCode,omitempty"`
-	PlayerIndex int            `json:"playerIndex"`
-	From        int            `json:"from,omitempty"`
-	Name        string         `json:"name,omitempty"`
-	Text        string         `json:"text,omitempty"`
-	Players     []PlayerInfo   `json:"players,omitempty"`
-	LeftIndex   int            `json:"leftIndex,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-	Seed        uint32         `json:"seed,omitempty"`
-	View        *PlayerViewMsg `json:"view,omitempty"`
-	Zones       *ZonesMsg      `json:"zones,omitempty"`
-	Legal       []LegalMsg     `json:"legal"`
-	Events      []EventMsg     `json:"events"`
-	Reveal      *RevealMsg     `json:"reveal,omitempty"`
-	YourTurn    bool           `json:"yourTurn,omitempty"`
-	GameOver    bool           `json:"gameOver,omitempty"`
-	Paused      bool           `json:"paused,omitempty"`
-	RematchVotes [2]bool       `json:"rematchVotes,omitempty"`
-	Message     string         `json:"message,omitempty"`
-	Connected   []bool         `json:"connected,omitempty"`
+	Type          string            `json:"type"`
+	RoomCode      string            `json:"roomCode,omitempty"`
+	Mode          string            `json:"mode,omitempty"`
+	PlayerIndex   int               `json:"playerIndex"`
+	From          int               `json:"from,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	Text          string            `json:"text,omitempty"`
+	Players       []PlayerInfo      `json:"players,omitempty"`
+	LeftIndex     int               `json:"leftIndex,omitempty"`
+	Reason        string            `json:"reason,omitempty"`
+	Seed          uint32            `json:"seed,omitempty"`
+	View          *PlayerViewMsg    `json:"view,omitempty"`
+	Zones         *ZonesMsg         `json:"zones,omitempty"`
+	Legal         []LegalMsg        `json:"legal"`
+	Events        []EventMsg        `json:"events"`
+	Reveal        *RevealMsg        `json:"reveal,omitempty"`
+	YourTurn      bool              `json:"yourTurn,omitempty"`
+	GameOver      bool              `json:"gameOver,omitempty"`
+	Paused        bool              `json:"paused,omitempty"`
+	RematchVotes  [2]bool           `json:"rematchVotes,omitempty"`
+	DeckConfig    map[string]int    `json:"deckConfig,omitempty"`
+	Spectator     bool              `json:"spectator,omitempty"`
+	SpectatorView *SpectatorViewMsg `json:"spectatorView,omitempty"`
+	Replay        *ReplayDataMsg    `json:"replay,omitempty"`
+	Message       string            `json:"message,omitempty"`
+	Connected     []bool            `json:"connected,omitempty"`
 }
 
 // ClientMessage 客户端消息
 type ClientMessage struct {
-	Type   string     `json:"type"`
-	Name   string     `json:"name,omitempty"`
-	Mode   string     `json:"mode,omitempty"`
-	Code   string     `json:"code,omitempty"`
-	Action *ActionMsg `json:"action,omitempty"`
-	Text   string     `json:"text,omitempty"`
+	Type       string         `json:"type"`
+	Name       string         `json:"name,omitempty"`
+	Mode       string         `json:"mode,omitempty"`
+	Code       string         `json:"code,omitempty"`
+	Action     *ActionMsg     `json:"action,omitempty"`
+	Text       string         `json:"text,omitempty"`
+	DeckConfig map[string]int `json:"deckConfig,omitempty"`
 }
 
 // ActionMsg 动作消息
 type ActionMsg struct {
-	Type        string   `json:"type"`
-	HandIndices []int    `json:"handIndices,omitempty"`
-	Claim       string   `json:"claim,omitempty"`
-	PickIndices []int    `json:"pickIndices,omitempty"`
+	Type        string `json:"type"`
+	HandIndices []int  `json:"handIndices,omitempty"`
+	Claim       string `json:"claim,omitempty"`
+	PickIndices []int  `json:"pickIndices,omitempty"`
 }
 
 // PlayerInfo 玩家信息
@@ -176,20 +203,20 @@ type PlayerInfo struct {
 
 // PlayerViewMsg 玩家视角
 type PlayerViewMsg struct {
-	Frame            int          `json:"frame"`
-	Me               MeMsg        `json:"me"`
-	Opponent         OpponentMsg  `json:"opponent"`
-	DeckCount        int          `json:"deckCount"`
-	DiscardCount     int          `json:"discardCount"`
-	AttackingClaim   *ClaimMsg    `json:"attackingClaim"`
-	BlockingClaim    *ClaimMsg    `json:"blockingClaim"`
-	Phase            string       `json:"phase"`
-	AttackerIndex    int          `json:"attackerIndex"`
-	BoutWinners      []int        `json:"boutWinners"`
+	Frame            int           `json:"frame"`
+	Me               MeMsg         `json:"me"`
+	Opponent         OpponentMsg   `json:"opponent"`
+	DeckCount        int           `json:"deckCount"`
+	DiscardCount     int           `json:"discardCount"`
+	AttackingClaim   *ClaimMsg     `json:"attackingClaim"`
+	BlockingClaim    *ClaimMsg     `json:"blockingClaim"`
+	Phase            string        `json:"phase"`
+	AttackerIndex    int           `json:"attackerIndex"`
+	BoutWinners      []int         `json:"boutWinners"`
 	GameEnded        *GameEndedMsg `json:"gameEnded"`
 	Config           GameConfigMsg `json:"config"`
-	LastAttackPassed bool         `json:"lastAttackPassed"`
-	RoundNumber      int          `json:"roundNumber"`
+	LastAttackPassed bool          `json:"lastAttackPassed"`
+	RoundNumber      int           `json:"roundNumber"`
 }
 
 // MeMsg 己方信息
@@ -202,9 +229,9 @@ type MeMsg struct {
 
 // OpponentMsg 对方信息
 type OpponentMsg struct {
-	Index     int    `json:"index"`
-	Cakes     int    `json:"cakes"`
-	HandCount int    `json:"handCount"`
+	Index     int `json:"index"`
+	Cakes     int `json:"cakes"`
+	HandCount int `json:"handCount"`
 }
 
 // ClaimMsg 声明信息
@@ -228,14 +255,14 @@ type GameConfigMsg struct {
 
 // ZonesMsg 分区卡牌
 type ZonesMsg struct {
-	PlayerHand       []CardEntityMsg   `json:"playerHand"`
-	OpponentHand     []CardEntityMsg   `json:"opponentHand"`
-	AttackPile       []CardEntityMsg   `json:"attackPile"`
-	BlockPile        []CardEntityMsg   `json:"blockPile"`
-	DeckTop          []CardEntityMsg   `json:"deckTop"`
-	RevealedPileCards map[int]string   `json:"revealedPileCards"`
-	DeckCount        int               `json:"deckCount"`
-	DiscardCount     int               `json:"discardCount"`
+	PlayerHand        []CardEntityMsg `json:"playerHand"`
+	OpponentHand      []CardEntityMsg `json:"opponentHand"`
+	AttackPile        []CardEntityMsg `json:"attackPile"`
+	BlockPile         []CardEntityMsg `json:"blockPile"`
+	DeckTop           []CardEntityMsg `json:"deckTop"`
+	RevealedPileCards map[int]string  `json:"revealedPileCards"`
+	DeckCount         int             `json:"deckCount"`
+	DiscardCount      int             `json:"discardCount"`
 }
 
 // CardEntityMsg 卡牌实体
@@ -257,27 +284,27 @@ type LegalMsg struct {
 
 // EventMsg 事件
 type EventMsg struct {
-	ID            int             `json:"id"`
-	Type          string          `json:"type"`
-	Player        *int            `json:"player,omitempty"`
-	Phase         string          `json:"phase,omitempty"`
-	Pile          string          `json:"pile,omitempty"`
-	Claim         string          `json:"claim,omitempty"`
-	CardNames     []string        `json:"cardNames,omitempty"`
-	RevealedCards []RevealedMsg   `json:"revealedCards,omitempty"`
-	Challenger    int             `json:"challenger,omitempty"`
-	ClaimedCard   string          `json:"claimedCard,omitempty"`
-	Success       bool            `json:"success"`
-	From          int             `json:"from,omitempty"`
-	To            int             `json:"to,omitempty"`
-	Amount        int             `json:"amount,omitempty"`
-	CakesAfter    [2]int          `json:"cakesAfter,omitempty"`
-	Winner        int             `json:"winner,omitempty"`
-	AttackerIndex int             `json:"attackerIndex,omitempty"`
-	BoutNumber    int             `json:"boutNumber,omitempty"`
-	PickType      string          `json:"pickType,omitempty"`
-	Picks         []string        `json:"picks,omitempty"`
-	Zone          string          `json:"zone,omitempty"`
+	ID            int           `json:"id"`
+	Type          string        `json:"type"`
+	Player        *int          `json:"player,omitempty"`
+	Phase         string        `json:"phase,omitempty"`
+	Pile          string        `json:"pile,omitempty"`
+	Claim         string        `json:"claim,omitempty"`
+	CardNames     []string      `json:"cardNames,omitempty"`
+	RevealedCards []RevealedMsg `json:"revealedCards,omitempty"`
+	Challenger    int           `json:"challenger,omitempty"`
+	ClaimedCard   string        `json:"claimedCard,omitempty"`
+	Success       bool          `json:"success"`
+	From          int           `json:"from,omitempty"`
+	To            int           `json:"to,omitempty"`
+	Amount        int           `json:"amount,omitempty"`
+	CakesAfter    [2]int        `json:"cakesAfter,omitempty"`
+	Winner        int           `json:"winner,omitempty"`
+	AttackerIndex int           `json:"attackerIndex,omitempty"`
+	BoutNumber    int           `json:"boutNumber,omitempty"`
+	PickType      string        `json:"pickType,omitempty"`
+	Picks         []string      `json:"picks,omitempty"`
+	Zone          string        `json:"zone,omitempty"`
 }
 
 // RevealedMsg 翻开牌信息
@@ -288,6 +315,6 @@ type RevealedMsg struct {
 
 // RevealMsg 质疑翻开动画数据
 type RevealMsg struct {
-	Pile  string           `json:"pile"`
-	Cards []CardEntityMsg  `json:"cards"`
+	Pile  string          `json:"pile"`
+	Cards []CardEntityMsg `json:"cards"`
 }

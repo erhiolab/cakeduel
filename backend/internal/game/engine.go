@@ -23,7 +23,10 @@ func NewGame(cfg GameConfig, seed uint32) (*State, []Event, error) {
 
 	rng := NewRNG(seed)
 	cardList := append([]string{}, BaseCardList...)
-	if cfg.SpecialCardsToAdd > 0 {
+	if cfg.DeckConfig != nil {
+		// 自定义卡组: 特殊卡按配置数量加入(可全部为 0 = 纯基础卡)
+		cardList = append(cardList, expandDeckConfig(cfg.DeckConfig)...)
+	} else if cfg.SpecialCardsToAdd > 0 {
 		indices := rangeInt(len(SpecialCardList))
 		sampled := rng.Sample(indices, cfg.SpecialCardsToAdd)
 		for _, idx := range sampled {

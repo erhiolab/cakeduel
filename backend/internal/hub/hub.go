@@ -17,29 +17,38 @@ const (
 
 // Hub 房间中心
 type Hub struct {
-	mu             sync.Mutex
-	rooms          map[string]*Room
-	matching       []*Client
-	clientsByToken map[string]*Client
-	gameConfig     game.GameConfig
-	roomCodeLen    int
-	matchTimeout   time.Duration
+	mu              sync.Mutex
+	rooms           map[string]*Room
+	matching        []*Client
+	clientsByToken  map[string]*Client
+	clients         map[*Client]struct{}
+	gameConfig      game.GameConfig
+	roomCodeLen     int
+	matchTimeout    time.Duration
 	disconnectGrace time.Duration
-	rdb            redis.Cmdable
-	closed         bool
+	maxConnections  int
+	idleTimeout     time.Duration
+	rdb             redis.Cmdable
+	closed          bool
 }
 
 // NewHub 创建房间中心
 func NewHub(cfg game.GameConfig, rdb redis.Cmdable) *Hub {
-	return &Hub{
+	h := &Hub{
 		rooms:           make(map[string]*Room),
 		clientsByToken:  make(map[string]*Client),
+		clients:         make(map[*Client]struct{}),
 		gameConfig:      cfg,
 		roomCodeLen:     6,
 		matchTimeout:    60 * time.Minute,
 		disconnectGrace: 45 * time.Second,
+		maxConnections:  1000,
+		idleTimeout:     3 * time.Minute,
 		rdb:             rdb,
 	}
+	// 空闲连接回收与清理定时器
+	go h.cleanupLoop()
+	return h
 }
 
 // SetRoomCodeLen 设置房间码长度
@@ -59,10 +68,42 @@ func (h *Hub) SetDisconnectGrace(d time.Duration) {
 	h.disconnectGrace = d
 }
 
+// SetMaxConnections 设置最大连接数
+func (h *Hub) SetMaxConnections(n int) {
+	if n > 0 {
+		h.maxConnections = n
+	}
+}
+
+// SetIdleTimeout 设置空闲连接回收时间
+func (h *Hub) SetIdleTimeout(d time.Duration) {
+	if d > 0 {
+		h.idleTimeout = d
+	}
+}
+
+// tryAcquireConn 尝试占一个连接名额; 超限返回 false
+func (h *Hub) tryAcquireConn() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false
+	}
+	if len(h.clients) >= h.maxConnections {
+		return false
+	}
+	return true
+}
+
 // registerClient 注册连接; 若 token 对应断线席位则恢复
 func (h *Hub) registerClient(c *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	h.clients[c] = struct{}{}
+	c.touch()
 	if old, ok := h.clientsByToken[c.Token]; ok && old.disconnected && old.room != nil {
 		room := old.room
 		idx := old.playerIndex
@@ -86,13 +127,48 @@ func (h *Hub) registerClient(c *Client) {
 			if room.GameStarted && room.Game != nil {
 				room.broadcastGameState(nil)
 			} else {
-				c.Send(ServerMessage{Type: "room_joined", RoomCode: room.Code, PlayerIndex: idx, Players: room.playersInfo()})
+				c.Send(ServerMessage{Type: "room_joined", RoomCode: room.Code, Mode: room.Mode, PlayerIndex: idx, Players: room.playersInfo(), DeckConfig: room.DeckConfig})
 			}
 			logger.Log.Info("玩家重连成功", zap.String("room", room.Code), zap.Int("player", idx))
 			return
 		}
 	}
 	h.clientsByToken[c.Token] = c
+}
+
+// forgetClient 从注册表移除连接(token 映射仅当指向该连接时删除)
+func (h *Hub) forgetClient(c *Client) {
+	delete(h.clients, c)
+	if cur, ok := h.clientsByToken[c.Token]; ok && cur == c {
+		delete(h.clientsByToken, c.Token)
+	}
+	h.unmarkOnline(c)
+}
+
+// cleanupLoop 定时清理: 释放空闲(房间外且非匹配)连接
+func (h *Hub) cleanupLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		h.reapIdleClients()
+	}
+}
+
+// reapIdleClients 回收长时间无消息且不在房间/匹配中的连接
+func (h *Hub) reapIdleClients() {
+	h.mu.Lock()
+	var idle []*Client
+	now := time.Now()
+	for c := range h.clients {
+		if c.room == nil && !c.matching && now.Sub(time.Unix(0, c.lastActive)) > h.idleTimeout {
+			idle = append(idle, c)
+		}
+	}
+	for _, c := range idle {
+		logger.Log.Info("回收空闲连接", zap.String("client", c.ID))
+		h.leaveLocked(c, true)
+	}
+	h.mu.Unlock()
 }
 
 // markOnline 异步刷新 Redis 在线标记(不阻塞主流程, Redis 不可用时忽略)
@@ -161,6 +237,10 @@ func (h *Hub) Chat(c *Client, text string) {
 		c.sendError("你不在任何房间中")
 		return
 	}
+	if c.spectating {
+		// 观战席只读, 不参与玩家聊天
+		return
+	}
 	text = sanitizeName(text)
 	if text == "" {
 		return
@@ -215,13 +295,16 @@ func (h *Hub) CreateRoom(c *Client, msg *ClientMessage) {
 
 	// 私有房间
 	room := h.newRoom("private")
+	room.DeckConfig = game.NormalizeDeckConfig(msg.DeckConfig)
 	room.addClient(c, 0)
 	h.rooms[room.Code] = room
 	c.Send(ServerMessage{
 		Type:        "room_joined",
 		RoomCode:    room.Code,
+		Mode:        room.Mode,
 		PlayerIndex: 0,
 		Players:     room.playersInfo(),
+		DeckConfig:  room.DeckConfig,
 	})
 }
 
@@ -293,6 +376,23 @@ func (h *Hub) JoinRoom(c *Client, msg *ClientMessage) {
 		c.sendError("房间不存在或已关闭")
 		return
 	}
+	if room.GameStarted && room.Clients[0] != nil && room.Clients[1] != nil {
+		// 满员且对局进行中: 以观战身份加入(看不到任何一方手牌)
+		c.Name = sanitizeName(msg.Name)
+		room.addSpectator(c)
+		h.markOnline(c)
+		c.Send(ServerMessage{
+			Type:        "room_joined",
+			RoomCode:    room.Code,
+			Mode:        room.Mode,
+			PlayerIndex: -1,
+			Players:     room.playersInfo(),
+			DeckConfig:  room.DeckConfig,
+			Spectator:   true,
+		})
+		room.broadcastSpectatorState(nil, nil)
+		return
+	}
 	if room.GameStarted {
 		c.sendError("对局已经开始, 无法加入")
 		return
@@ -308,8 +408,10 @@ func (h *Hub) JoinRoom(c *Client, msg *ClientMessage) {
 		c.Send(ServerMessage{
 			Type:        "room_joined",
 			RoomCode:    room.Code,
+			Mode:        room.Mode,
 			PlayerIndex: idx,
 			Players:     room.playersInfo(),
+			DeckConfig:  room.DeckConfig,
 		})
 		h.announceRoom(room)
 		go room.waitForStart()
@@ -325,6 +427,11 @@ func (h *Hub) StartGame(c *Client) {
 	if room == nil {
 		h.mu.Unlock()
 		c.sendError("你不在任何房间中")
+		return
+	}
+	if c.spectating || room.Clients[c.playerIndex] != c {
+		h.mu.Unlock()
+		c.sendError("观战模式不能开始对局")
 		return
 	}
 	if room.Clients[0] == nil || room.Clients[1] == nil {
@@ -350,6 +457,11 @@ func (h *Hub) HandleAction(c *Client, action *ActionMsg) {
 		c.sendError("当前没有进行中的对局")
 		return
 	}
+	if c.spectating || room.Clients[c.playerIndex] != c {
+		h.mu.Unlock()
+		c.sendError("观战模式不能操作对局")
+		return
+	}
 	room.mu.Lock()
 	if room.paused() {
 		room.mu.Unlock()
@@ -369,6 +481,11 @@ func (h *Hub) Rematch(c *Client) {
 	if room == nil {
 		h.mu.Unlock()
 		c.sendError("你不在任何房间中")
+		return
+	}
+	if c.spectating || room.Clients[c.playerIndex] != c {
+		h.mu.Unlock()
+		c.sendError("观战模式不能操作对局")
 		return
 	}
 	if room.Game == nil || room.Game.GameEnded == nil {
@@ -399,6 +516,11 @@ func (h *Hub) Rematch(c *Client) {
 func (h *Hub) Leave(c *Client, graceful bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.leaveLocked(c, graceful)
+}
+
+// leaveLocked Leave 内部实现(需持有 hub 锁)
+func (h *Hub) leaveLocked(c *Client, graceful bool) {
 	if c.matching {
 		for i, waiter := range h.matching {
 			if waiter == c {
@@ -407,24 +529,32 @@ func (h *Hub) Leave(c *Client, graceful bool) {
 			}
 		}
 		c.matching = false
-		h.unmarkOnline(c)
+		h.forgetClient(c)
 		c.Close()
 		return
 	}
 	room := c.room
 	if room == nil {
-		h.unmarkOnline(c)
+		h.forgetClient(c)
 		c.Close()
+		return
+	}
+	if c.spectating {
+		// 观战没有席位, 断开即移除, 不进入重连宽容期
+		room.removeSpectator(c)
+		h.forgetClient(c)
 		return
 	}
 	if graceful {
 		room.removeClient(c)
-		h.unmarkOnline(c)
+		h.forgetClient(c)
 		return
 	}
 	// 断线: 保留席位, 启动重连宽容期
 	if room.Clients[c.playerIndex] == c {
 		c.disconnected = true
+		// 连接已结束: 释放连接名额与活跃集合, 但保留 token 映射供重连恢复
+		delete(h.clients, c)
 		h.unmarkOnline(c)
 		room.stopTurnTimer()
 		if other := room.otherClient(c); other != nil && !other.disconnected {
@@ -437,12 +567,17 @@ func (h *Hub) Leave(c *Client, graceful bool) {
 		room.disconnectTimer = time.AfterFunc(grace, func() {
 			h.mu.Lock()
 			defer h.mu.Unlock()
+			// 房间已因对手离开等原因销毁时不再处理
+			if _, ok := h.rooms[room.Code]; !ok {
+				return
+			}
 			// 若已重连则跳过
 			if room.Clients[c.playerIndex] != c || !c.disconnected {
 				return
 			}
 			logger.Log.Info("重连超时, 释放席位", zap.String("room", room.Code), zap.Int("player", c.playerIndex))
 			room.removeClient(c)
+			h.forgetClient(c)
 		})
 	}
 	c.Close()

@@ -3,7 +3,11 @@ import {computed, ref, watch, onMounted, onUnmounted} from "vue"
 import {game} from "../composables/useGame"
 import {audioState, playSfx, toggleBgm} from "../game/audio"
 import {appConfig} from "../config"
+import {CARDS, DEFAULT_DECK, SPECIAL_CARD_NAMES} from "../game/cards"
+import {deleteSavedReplay, loadSavedReplays, type ReplayData} from "../composables/useGame"
 import HelpOverlay from "../components/HelpOverlay.vue"
+import AboutOverlay from "../components/AboutOverlay.vue"
+import ReplayViewer from "../components/ReplayViewer.vue"
 
 // 房间状态
 const {state, createRoom, joinRoom, leave, clearMessage} = game
@@ -25,6 +29,18 @@ const code = ref("")
 
 // 显示帮助状态
 const showHelp = ref(false)
+
+// 显示关于信息
+const showAbout = ref(false)
+
+// 回放列表弹层
+const showReplays = ref(false)
+
+// 回放列表数据
+const replays = ref<ReplayData[]>([])
+
+// 正在播放的回放
+const activeReplay = ref<ReplayData | null>(null)
 
 // 匹配状态
 const busy = ref(false)
@@ -105,8 +121,52 @@ const doCreate = (mode: "private" | "random") => {
 	playSfx("hoof")
 	clearMessage()
 	busy.value = true
-	createRoom(name.value.trim() || "神秘玩家", mode)
+	// 随机匹配使用经典卡组; 私有房间使用用户自定义(默认经典)
+	const DECK = mode === "private" && deckCustom.value ? {...deckCounts.value} : undefined
+	createRoom(name.value.trim() || "神秘玩家", mode, DECK)
 	window.setTimeout(() => (busy.value = false), 800)
+}
+
+// 是否展开卡组配置
+const deckCustom = ref(false)
+
+// 当前编辑的特殊卡数量
+const deckCounts = ref<Record<string, number>>({...DEFAULT_DECK})
+
+// 是否全部为 0
+const deckZero = computed(() => SPECIAL_CARD_NAMES.every((n) => (deckCounts.value[n] ?? 0) === 0))
+
+// 配置摘要(用于按钮副标题)
+const deckSummary = computed(() => {
+	if (deckZero.value) return "不使用特殊卡"
+	return SPECIAL_CARD_NAMES.filter((n) => (deckCounts.value[n] ?? 0) > 0)
+		.map((n) => `${CARDS[n]?.name ?? n}×${deckCounts.value[n]}`)
+		.join(" ")
+})
+
+// 展开/收起卡组配置
+const toggleDeck = () => {
+	deckCustom.value = !deckCustom.value
+}
+
+// 调整某张特殊卡数量(0-3)
+const changeDeck = (name: string, delta: number) => {
+	const NEXT = {...deckCounts.value}
+	const V = Math.max(0, Math.min(3, (NEXT[name] ?? 0) + delta))
+	NEXT[name] = V
+	deckCounts.value = NEXT
+}
+
+// 恢复经典配置
+const resetDeck = () => {
+	deckCounts.value = {...DEFAULT_DECK}
+}
+
+// 全部置 0(不使用特殊卡)
+const zeroDeck = () => {
+	const NEXT: Record<string, number> = {}
+	for (const n of SPECIAL_CARD_NAMES) NEXT[n] = 0
+	deckCounts.value = NEXT
 }
 
 // 加入房间
@@ -124,6 +184,48 @@ onUnmounted(() => {
 	if (matchTimer) window.clearInterval(matchTimer)
 	if (pingTimer) window.clearInterval(pingTimer)
 })
+
+// 打开回放列表
+const openReplays = () => {
+	playSfx("hoof")
+	replays.value = loadSavedReplays()
+	showReplays.value = true
+}
+
+// 关闭回放列表
+const closeReplays = () => {
+	showReplays.value = false
+	activeReplay.value = null
+}
+
+// 删除一份回放
+const removeReplay = (replay: ReplayData) => {
+	deleteSavedReplay(replay.startedAt)
+	replays.value = loadSavedReplays()
+}
+
+// 播放回放
+const watchReplay = (replay: ReplayData) => {
+	playSfx("hoof")
+	activeReplay.value = replay
+}
+
+// 回放耗时文本
+const replayDuration = (replay: ReplayData): string => {
+	const SECONDS = Math.max(1, Math.round((replay.durationMs ?? 0) / 1000))
+	return SECONDS >= 60 ? `${Math.floor(SECONDS / 60)}分${SECONDS % 60}秒` : `${SECONDS}秒`
+}
+
+// 回放时间文本
+const replayTime = (replay: ReplayData): string => {
+	if (!replay.startedAt) return ""
+	return new Date(replay.startedAt).toLocaleString("zh-CN", {
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+	})
+}
 </script>
 
 <template>
@@ -144,6 +246,7 @@ onUnmounted(() => {
 					<path d="M16 8l5 5M21 8l-5 5"/>
 				</svg>
 			</button>
+			<button class="about-btn" title="关于 / 仓库 / 版权" @click="showAbout = true">i</button>
 			<button class="help-btn" @click="showHelp = true">?</button>
 		</div>
 		<div class="content">
@@ -166,6 +269,10 @@ onUnmounted(() => {
 							<span>你的昵称</span>
 							<input v-model="name" maxlength="12" placeholder="神秘玩家"/>
 						</label>
+						<button class="replay-link" @click="openReplays">
+							<span>🎞 回放录像</span>
+							<small>查看本地保存的最近对局</small>
+						</button>
 						<button class="main-btn" @click="go('create')">
 							<span>创建房间</span>
 							<small>私有房间或随机匹配</small>
@@ -180,12 +287,32 @@ onUnmounted(() => {
 						<h2 class="panel-title">创建房间</h2>
 						<button class="main-btn" :disabled="busy" @click="doCreate('private')">
 							<span>创建私有房间</span>
-							<small>生成房间码，好友输入即可加入</small>
+							<small>{{ deckCustom ? `自定义卡组: ${deckSummary}` : "生成房间码，好友输入即可加入" }}</small>
 						</button>
 						<button class="main-btn accent" :disabled="busy" @click="doCreate('random')">
 							<span>随机匹配</span>
-							<small>匹配同样选择了随机的玩家</small>
+							<small>匹配同样选择了随机的玩家（经典卡组）</small>
 						</button>
+
+						<button class="ghost-btn deck-toggle" @click="toggleDeck">
+							{{ deckCustom ? "收起卡组配置" : "自定义卡组（特殊卡数量）" }}
+						</button>
+						<div v-if="deckCustom" class="deck-editor">
+							<div v-for="name in SPECIAL_CARD_NAMES" :key="name" class="deck-row">
+								<span class="deck-name">{{ CARDS[name]?.name ?? name }}</span>
+								<div class="deck-stepper">
+									<button class="step-btn" @click="changeDeck(name, -1)">−</button>
+									<span class="step-val">{{ deckCounts[name] ?? 0 }}</span>
+									<button class="step-btn" @click="changeDeck(name, 1)">＋</button>
+								</div>
+							</div>
+							<p v-if="deckZero" class="deck-zero">全部为 0：本局不使用特殊卡</p>
+							<div class="deck-presets">
+								<button class="preset-btn" @click="resetDeck">经典</button>
+								<button class="preset-btn" @click="zeroDeck">无特殊卡</button>
+							</div>
+						</div>
+
 						<button class="ghost-btn" @click="back">返回</button>
 					</div>
 					<div v-else key="join" class="menu">
@@ -210,6 +337,44 @@ onUnmounted(() => {
 		</div>
 		<p v-if="serverDown" class="server-warning">服务器状态异常, 请联系管理员</p>
 		<HelpOverlay :open="showHelp" @close="showHelp = false"/>
+		<AboutOverlay :open="showAbout" @close="showAbout = false"/>
+
+		<Transition name="fade">
+			<div v-if="showReplays && !activeReplay" class="replay-overlay" data-cakeduel-screen="replays">
+				<div class="replay-panel glass">
+					<div class="replay-head">
+						<h2>🎞 回放录像</h2>
+						<button class="close-btn" @click="closeReplays">✕</button>
+					</div>
+					<p class="replay-tip">对局结束后回放会自动保存到本地（最多 10 场）</p>
+					<div v-if="replays.length === 0" class="empty">
+						<p>暂无回放</p>
+						<small>打完一局后会自动保存，可随时回来复盘</small>
+					</div>
+					<div v-else class="replay-list">
+						<div v-for="replay in replays" :key="replay.startedAt" class="replay-item">
+							<div class="replay-info">
+								<span class="names">{{ replay.playerNames?.[0] || "玩家A" }} vs {{ replay.playerNames?.[1] || "玩家B" }}</span>
+								<span class="sub">
+									{{ replayTime(replay) }} · 用时 {{ replayDuration(replay) }} ·
+									🏆 {{ replay.playerNames?.[replay.winner] || `玩家 ${(replay.winner ?? 0) + 1}` }} 获胜
+								</span>
+							</div>
+							<div class="replay-actions">
+								<button class="watch-btn" @click="watchReplay(replay)">观看</button>
+								<button class="del-btn" title="删除" @click="removeReplay(replay)">🗑</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</Transition>
+
+		<ReplayViewer
+			v-if="activeReplay"
+			:replay="activeReplay"
+			@close="closeReplays"
+		/>
 	</div>
 </template>
 
@@ -251,7 +416,8 @@ onUnmounted(() => {
 }
 
 .help-btn,
-.music-btn {
+.music-btn,
+.about-btn {
 	width: 2.2rem;
 	height: 2.2rem;
 	border-radius: 50%;
@@ -268,9 +434,17 @@ onUnmounted(() => {
 }
 
 .help-btn:hover,
-.music-btn:hover {
+.music-btn:hover,
+.about-btn:hover {
 	transform: scale(1.08);
 	box-shadow: 0 0 16px rgba(240, 200, 120, 0.5);
+}
+
+.about-btn {
+	font-family: Georgia, "Times New Roman", serif;
+	font-style: italic;
+	font-weight: 800;
+	font-size: 1.05rem;
 }
 
 .music-btn.muted {
@@ -417,6 +591,33 @@ onUnmounted(() => {
 	box-shadow: 0 6px 24px rgba(232, 162, 58, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
+.replay-link {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.1rem;
+	padding: 0.55rem;
+	border-radius: 0.7rem;
+	font-size: 0.88rem;
+	font-weight: 800;
+	color: #6b4a2b;
+	background: rgba(255, 255, 255, 0.42);
+	border: 1px solid rgba(107, 84, 56, 0.3);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+	transition: background 0.2s, transform 0.15s;
+}
+
+.replay-link:hover {
+	background: rgba(255, 255, 255, 0.62);
+	transform: scale(1.01);
+}
+
+.replay-link small {
+	font-size: 0.62rem;
+	font-weight: 600;
+	color: #9a7a55;
+}
+
 .ghost-btn {
 	padding: 0.45rem;
 	border-radius: 0.7rem;
@@ -452,6 +653,172 @@ onUnmounted(() => {
 	font-weight: 800;
 	text-align: center;
 	animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
+.replay-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 120;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1rem;
+	background: rgba(12, 18, 26, 0.72);
+	backdrop-filter: blur(5px);
+}
+
+.replay-panel {
+	width: 100%;
+	max-width: 30rem;
+	max-height: min(84vh, 40rem);
+	display: flex;
+	flex-direction: column;
+	border-radius: 1.1rem;
+	padding: 1.1rem 1.2rem;
+	overflow: hidden;
+	animation: rise-in 0.3s ease both;
+}
+
+.replay-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.replay-head h2 {
+	font-size: 1.15rem;
+	font-weight: 900;
+	color: #3a2c1f;
+}
+
+.close-btn {
+	width: 2rem;
+	height: 2rem;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 0.9rem;
+	font-weight: 800;
+	color: #6b5438;
+	background: rgba(0, 0, 0, 0.06);
+	transition: background 0.2s;
+}
+
+.close-btn:hover {
+	background: rgba(0, 0, 0, 0.12);
+}
+
+.replay-tip {
+	margin-top: 0.35rem;
+	font-size: 0.68rem;
+	color: #9a7a55;
+	font-weight: 600;
+}
+
+.empty {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.35rem;
+	padding: 2rem 0;
+	text-align: center;
+}
+
+.empty p {
+	font-size: 0.95rem;
+	font-weight: 800;
+	color: #6b5438;
+}
+
+.empty small {
+	font-size: 0.72rem;
+	color: #9a7a55;
+}
+
+.replay-list {
+	margin-top: 0.7rem;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	flex: 1;
+	min-height: 0;
+	padding-right: 0.15rem;
+}
+
+.replay-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.6rem;
+	padding: 0.65rem 0.75rem;
+	border-radius: 0.8rem;
+	background: rgba(255, 255, 255, 0.55);
+	border: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.replay-info {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	min-width: 0;
+}
+
+.names {
+	font-size: 0.88rem;
+	font-weight: 800;
+	color: #3a2c1f;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sub {
+	font-size: 0.66rem;
+	font-weight: 600;
+	color: #9a7a55;
+}
+
+.replay-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	flex-shrink: 0;
+}
+
+.watch-btn {
+	padding: 0.4rem 0.9rem;
+	border-radius: 2rem;
+	font-size: 0.78rem;
+	font-weight: 800;
+	color: #fdf6e9;
+	background: linear-gradient(135deg, #d97706, #b45309);
+	transition: transform 0.15s;
+}
+
+.watch-btn:hover {
+	transform: scale(1.04);
+}
+
+.del-btn {
+	width: 1.9rem;
+	height: 1.9rem;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 0.85rem;
+	background: rgba(220, 38, 38, 0.1);
+	border: 1px solid rgba(220, 38, 38, 0.2);
+	transition: background 0.2s;
+}
+
+.del-btn:hover {
+	background: rgba(220, 38, 38, 0.25);
 }
 
 .matching {
@@ -543,6 +910,119 @@ onUnmounted(() => {
 
 	.menu {
 		gap: 0.55rem;
+	}
+}
+
+.deck-toggle {
+	align-self: center;
+	color: #b45309;
+	font-size: 0.8rem;
+}
+
+.deck-editor {
+	border-top: 1px dashed rgba(107, 84, 56, 0.25);
+	padding-top: 0.55rem;
+	max-height: 14rem;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.deck-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.deck-name {
+	font-size: 0.85rem;
+	font-weight: 800;
+	color: #3a2c1f;
+}
+
+.deck-stepper {
+	display: flex;
+	align-items: center;
+	gap: 0.65rem;
+}
+
+.step-btn {
+	width: 1.7rem;
+	height: 1.7rem;
+	border-radius: 0.5rem;
+	background: rgba(255, 255, 255, 0.6);
+	border: 1px solid rgba(107, 84, 56, 0.3);
+	color: #6b4a2b;
+	font-size: 1rem;
+	font-weight: 900;
+	line-height: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.step-btn:active {
+	transform: scale(0.92);
+}
+
+.step-val {
+	min-width: 1.2rem;
+	text-align: center;
+	font-size: 0.95rem;
+	font-weight: 900;
+	color: #3a2c1f;
+}
+
+.deck-zero {
+	font-size: 0.75rem;
+	color: #dc2626;
+	font-weight: 700;
+	text-align: center;
+}
+
+.deck-presets {
+	display: flex;
+	gap: 0.5rem;
+	justify-content: center;
+}
+
+.preset-btn {
+	flex: 1;
+	padding: 0.3rem;
+	border-radius: 0.6rem;
+	background: rgba(255, 255, 255, 0.5);
+	border: 1px solid rgba(107, 84, 56, 0.25);
+	color: #6b4a2b;
+	font-size: 0.75rem;
+	font-weight: 800;
+}
+
+.preset-btn:active {
+	transform: scale(0.97);
+}
+
+/* 小屏(横屏/矮窗口): 配置区更紧凑可滚动, 不挤爆面板 */
+@media (max-height: 560px) and (min-width: 640px) {
+	.deck-editor {
+		max-height: 9rem;
+		gap: 0.2rem;
+	}
+
+	.deck-name {
+		font-size: 0.72rem;
+	}
+
+	.step-btn {
+		width: 1.4rem;
+		height: 1.4rem;
+		font-size: 0.85rem;
+	}
+
+	.panel {
+		max-height: calc(100vh - 1rem);
+		overflow-y: auto;
 	}
 }
 </style>

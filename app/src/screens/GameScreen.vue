@@ -113,7 +113,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-	<div class="game" data-cakeduel-screen="game" :class="{ compact }">
+	<div class="game" data-cakeduel-screen="game" :class="{ compact, revealing: !!state.reveal }">
 		<img class="bg" src="/cakeduel/playmat.jpg" alt="" draggable="false"/>
 		<div class="shade"></div>
 		<CakeTokens class="side left" :top="oppCakes" :bottom="myCakes" :size="cakeSize"/>
@@ -125,6 +125,9 @@ onUnmounted(() => {
 			:card-height="cardHeight"
 		/>
 		<div class="layout">
+			<Transition name="fade">
+				<div v-if="state.reveal" class="table-dim"></div>
+			</Transition>
 			<Transition name="pop">
 				<div v-if="state.connectionLost" class="conn-banner">
 					连接断开，正在重连…
@@ -135,9 +138,6 @@ onUnmounted(() => {
 			</Transition>
 			<TopHud :on-help="() => (showHelp = true)" :on-card-preview="onClaimPreview"/>
 			<div class="table">
-				<Transition name="fade">
-					<div v-if="state.reveal" class="table-dim"></div>
-				</Transition>
 				<div class="center">
 				<div class="opp-area">
 					<CardFan
@@ -290,10 +290,22 @@ onUnmounted(() => {
 .table-dim {
 	position: absolute;
 	inset: 0;
-	z-index: 20;
+	z-index: 28;
 	background: rgba(15, 20, 30, 0.55);
-	border-radius: 0.8rem;
 	pointer-events: none;
+}
+
+/* 质疑翻牌时: 手牌区与操作区降到遮罩之下(中央翻牌区保持最亮) */
+.game.revealing .layout {
+	z-index: 16;
+}
+
+.game.revealing .action-bar {
+	z-index: 10;
+}
+
+.game.revealing .hand-area {
+	z-index: 10;
 }
 
 .opp-area {

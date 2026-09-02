@@ -530,3 +530,42 @@ func TestSpecialCardClaimBlacklist(t *testing.T) {
 		t.Fatal("防守方应可声明盾卫")
 	}
 }
+
+// TestDeckConfigCustom 自定义卡组: 特殊卡按配置数量加入
+func TestDeckConfigCustom(t *testing.T) {
+	cfg := testConfig()
+	cfg.DeckConfig = map[string]int{"assassin": 2, "priest": 1}
+	s, _, err := NewGame(cfg, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 基础 29 + 刺客2 + 牧师1 = 32
+	if len(s.CardNames) != 32 {
+		t.Fatalf("自定义卡组应 32 张, 得到 %d", len(s.CardNames))
+	}
+	assassinCount, priestCount := 0, 0
+	for _, n := range s.CardNames {
+		if n == "assassin" {
+			assassinCount++
+		}
+		if n == "priest" {
+			priestCount++
+		}
+	}
+	if assassinCount != 2 || priestCount != 1 {
+		t.Fatalf("特殊卡数量错误: assassin=%d priest=%d", assassinCount, priestCount)
+	}
+}
+
+// TestDeckConfigNoSpecial 全部特殊卡为 0: 纯基础卡
+func TestDeckConfigNoSpecial(t *testing.T) {
+	cfg := testConfig()
+	cfg.DeckConfig = map[string]int{}
+	s, _, err := NewGame(cfg, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.CardNames) != 29 {
+		t.Fatalf("无特殊卡应 29 张, 得到 %d", len(s.CardNames))
+	}
+}

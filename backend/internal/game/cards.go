@@ -111,6 +111,50 @@ type GameConfig struct {
 	SpecialCardsToAdd int    `json:"specialCardsToAdd"`
 	StartingHandLimit int    `json:"startingHandLimit"`
 	TurnTimeoutSeconds int   `json:"turnTimeoutSeconds"`
+	// DeckConfig 自定义特殊卡数量(按卡名), 为空时使用 SpecialCardsToAdd 逻辑
+	DeckConfig map[string]int `json:"deckConfig,omitempty"`
+}
+
+// SpecialCardNames 可自定义数量的特殊卡(每种数量 0-3)
+var SpecialCardNames = []string{
+	"assassin", "scout", "summoner", "quartermaster", "oracle",
+	"priest", "angel", "baacrates", "agent_u", "pierrot",
+}
+
+// NormalizeDeckConfig 规整自定义卡组(只保留合法特殊卡, 数量限制 0-3)
+func NormalizeDeckConfig(dc map[string]int) map[string]int {
+	if dc == nil {
+		return nil
+	}
+	out := make(map[string]int)
+	valid := make(map[string]bool, len(SpecialCardNames))
+	for _, n := range SpecialCardNames {
+		valid[n] = true
+	}
+	for name, count := range dc {
+		if !valid[name] {
+			continue
+		}
+		if count < 0 {
+			count = 0
+		}
+		if count > 3 {
+			count = 3
+		}
+		out[name] = count
+	}
+	return out
+}
+
+// expandDeckConfig 按自定义数量展开特殊卡
+func expandDeckConfig(dc map[string]int) []string {
+	var out []string
+	for _, name := range SpecialCardNames {
+		for i := 0; i < dc[name]; i++ {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // StartingHandLimit 初始手牌上限

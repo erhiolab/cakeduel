@@ -10,6 +10,10 @@ gateway:
     static-path: "../app/dist"
     # 本地缓存过期时间(分钟)
     local-cache-expire: 10
+    # 最大 WebSocket 连接数(超出后新连接会被拒绝并提示服务器繁忙)
+    max-connections: 100
+    # 空闲连接回收时间(秒): 不在房间/匹配中且长时间无消息的连接会被释放
+    idle-timeout-seconds: 180
 
 # 日志配置
 logger:

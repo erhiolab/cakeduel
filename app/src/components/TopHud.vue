@@ -2,10 +2,13 @@
 import {computed, ref} from "vue"
 import {game} from "../composables/useGame"
 import {CARDS, cardSmallImage} from "../game/cards"
-import {audioState, toggleBgm} from "../game/audio"
+import {audioState, playSfx, toggleBgm} from "../game/audio"
 
 // 认输二次确认的自动取消时间(ms)
 const CONCEDE_CONFIRM_TIMEOUT_MS = 3000
+
+// 复制反馈显示时间(ms)
+const COPY_FEEDBACK_MS = 1400
 
 const props = defineProps<{
 	onHelp: () => void
@@ -18,8 +21,27 @@ const {state, act} = game
 // 是否已确认认输
 const concedeArmed = ref(false)
 
+// 是否已复制房间号
+const copiedRoom = ref(false)
+
 // 认输确认自动取消定时器
 let concedeTimer: number | undefined
+
+// 复制反馈定时器
+let copyTimer: number | undefined
+
+// 复制房间号(方便分享给好友观战)
+const copyRoom = () => {
+	const CODE = state.roomCode
+	if (!CODE) return
+	playSfx("hoof")
+	navigator.clipboard?.writeText(CODE).catch(() => {})
+	copiedRoom.value = true
+	if (copyTimer) window.clearTimeout(copyTimer)
+	copyTimer = window.setTimeout(() => {
+		copiedRoom.value = false
+	}, COPY_FEEDBACK_MS)
+}
 
 // 对局进行中且未暂停时可认输
 const canConcede = computed(() => !!state.view && !state.view.gameEnded && !state.paused)
@@ -116,6 +138,24 @@ const pressEnd = () => {
 	<div class="hud">
 		<div class="hud-inner" :class="{ mine: state.yourTurn }">
 			<div class="hud-left">
+				<button
+					class="room-btn"
+					:class="{ copied: copiedRoom }"
+					:title="copiedRoom ? '房间号已复制' : '点击复制房间号，好友输入可观战'"
+					@click="copyRoom"
+				>
+					<span class="room-prefix">🏠</span>
+					<b class="room-code">{{ state.roomCode || "------" }}</b>
+					<svg v-if="!copiedRoom" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+						 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="9" y="9" width="13" height="13" rx="2"/>
+						<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+					</svg>
+					<svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+						 stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M20 6L9 17l-5-5"/>
+					</svg>
+				</button>
 				<button class="music-btn" :class="{ muted: !audioState.bgmOn }" title="背景音乐开关" @click="toggleBgm">
 					<svg v-if="audioState.bgmOn" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
 						<path d="M9 18V5l12-2v13"/>
@@ -136,7 +176,7 @@ const pressEnd = () => {
 						<path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.2-3 4"/>
 						<circle cx="12" cy="17.5" r="0.5" fill="currentColor"/>
 					</svg>
-					规则
+					<span class="help-text">规则</span>
 				</button>
 				<button v-if="canConcede" class="concede-btn" :class="{ armed: concedeArmed }" @click="doConcede">
 					{{ concedeArmed ? "确认认输？" : "认输" }}
@@ -256,6 +296,48 @@ const pressEnd = () => {
 
 .music-btn.muted {
 	color: rgba(255, 255, 255, 0.35);
+}
+
+.room-btn {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	height: 1.8rem;
+	padding: 0 0.65rem;
+	border-radius: 2rem;
+	color: rgba(255, 235, 200, 0.9);
+	background: rgba(255, 255, 255, 0.08);
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	transition: background 0.2s, color 0.2s, transform 0.15s;
+}
+
+.room-btn:hover {
+	background: rgba(255, 255, 255, 0.18);
+	color: #fff;
+	transform: scale(1.02);
+}
+
+.room-btn .room-prefix {
+	font-size: 0.78rem;
+	line-height: 1;
+}
+
+.room-btn .room-code {
+	font-size: 0.8rem;
+	font-weight: 800;
+	letter-spacing: 0.12rem;
+	color: #ffd977;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.room-btn.copied {
+	background: rgba(52, 211, 153, 0.18);
+	border-color: rgba(52, 211, 153, 0.45);
+}
+
+.room-btn.copied .room-code {
+	color: #6ee7b7;
 }
 
 .concede-btn {
@@ -409,5 +491,30 @@ const pressEnd = () => {
 
 .hud-line.active {
 	background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.4), transparent);
+}
+
+/* 窄屏(手机横屏等): 收窄房间号与帮助按钮, 给中间状态留空间 */
+@media (max-width: 860px) {
+	.hud-inner {
+		padding: 0 0.55rem;
+	}
+
+	.help-text {
+		display: none;
+	}
+
+	.room-btn {
+		gap: 0.2rem;
+		padding: 0 0.5rem;
+	}
+
+	.room-btn .room-prefix {
+		display: none;
+	}
+
+	.room-btn .room-code {
+		font-size: 0.72rem;
+		letter-spacing: 0.08rem;
+	}
 }
 </style>

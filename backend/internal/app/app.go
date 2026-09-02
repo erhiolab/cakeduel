@@ -41,6 +41,8 @@ func New() *App {
 	gameHub.SetRoomCodeLen(gc.RoomCodeLength)
 	gameHub.SetMatchTimeout(time.Duration(gc.MatchmakingTimeoutSeconds) * time.Second)
 	gameHub.SetDisconnectGrace(time.Duration(gc.DisconnectGraceSeconds) * time.Second)
+	gameHub.SetMaxConnections(config.Get().Gateway.MaxConnections)
+	gameHub.SetIdleTimeout(time.Duration(config.Get().Gateway.IdleTimeoutSec) * time.Second)
 
 	return &App{
 		Redis: rdb,

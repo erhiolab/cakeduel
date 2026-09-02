@@ -7,6 +7,8 @@ type gatewayConfig struct {
 	TempPath         string `yaml:"temp-path"`
 	StaticPath       string `yaml:"static-path"`
 	LocalCacheExpire int    `yaml:"local-cache-expire"`
+	MaxConnections   int    `yaml:"max-connections"`
+	IdleTimeoutSec   int    `yaml:"idle-timeout-seconds"`
 }
 
 // LoggerConfig 日志配置

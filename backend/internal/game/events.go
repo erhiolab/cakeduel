@@ -140,6 +140,43 @@ func FilterEvents(events []Event, player int, cardNames []string) []Event {
 	return filterForPlayer(events, player, cardNames)
 }
 
+// FilterPublicEvents 仅保留公开事件(观战/直播视角), 卡牌ID转为牌名
+func FilterPublicEvents(events []Event, cardNames []string) []Event {
+	out := make([]Event, 0, len(events))
+	for _, evt := range events {
+		if !(evt.visibility[0] && evt.visibility[1]) {
+			continue
+		}
+		copied := evt
+		copied.visibility = [2]bool{false, false}
+		switch copied.Type {
+		case EventClaimMade, EventCardDrawn, EventCardDiscarded, EventDeckShuffled, EventHandRevealed:
+			copied.CardNames = nil
+			for _, id := range evt.cardIDs {
+				if id >= 0 && id < len(cardNames) {
+					copied.CardNames = append(copied.CardNames, cardNames[id])
+				} else {
+					copied.CardNames = append(copied.CardNames, "unknown")
+				}
+			}
+		case EventChallengeMade:
+			copied.RevealedCards = nil
+			for _, id := range evt.revealedIDs {
+				name := "unknown"
+				if id >= 0 && id < len(cardNames) {
+					name = cardNames[id]
+				}
+				copied.RevealedCards = append(copied.RevealedCards, RevealedCard{
+					CardName:      name,
+					TransformedTo: evt.transformed[id],
+				})
+			}
+		}
+		out = append(out, copied)
+	}
+	return out
+}
+
 // RevealedIDs 质疑翻开的卡牌实例ID(导出)
 func (e Event) RevealedIDs() []int {
 	return e.revealedIDs
