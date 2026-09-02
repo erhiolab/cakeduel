@@ -165,6 +165,7 @@ type ServerMessage struct {
 	Reveal        *RevealMsg        `json:"reveal,omitempty"`
 	YourTurn      bool              `json:"yourTurn,omitempty"`
 	GameOver      bool              `json:"gameOver,omitempty"`
+	YouWon        bool              `json:"youWon,omitempty"`
 	Paused        bool              `json:"paused,omitempty"`
 	RematchVotes  [2]bool           `json:"rematchVotes,omitempty"`
 	DeckConfig    map[string]int    `json:"deckConfig,omitempty"`

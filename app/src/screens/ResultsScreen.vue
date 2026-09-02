@@ -5,8 +5,8 @@ import {game} from "../composables/useGame"
 // 游戏状态
 const {state, rematch, leave} = game
 
-// 游戏结果
-const won = computed(() => state.view?.gameEnded?.winner === state.playerIndex)
+// 游戏结果(整场结束优先采用服务端权威 youWon, 防止本地身份时序错误)
+const won = computed(() => (state.view?.gameEnded ? !!state.youWon : state.view?.gameEnded?.winner === state.playerIndex))
 
 // 我的胜利次数
 const myWins = computed(() => state.view?.boutWinners.filter((w) => w === state.playerIndex).length ?? 0)

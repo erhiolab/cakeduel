@@ -328,6 +328,7 @@ func (r *Room) broadcastGameState(events []game.Event, reveal ...*RevealMsg) {
 			Reveal:   revealMsg,
 			YourTurn: yourTurn,
 			GameOver: s.GameEnded != nil,
+			YouWon:   s.GameEnded != nil && s.GameEnded.Winner == i,
 			Paused:   r.paused(),
 		}
 		c.Send(msg)

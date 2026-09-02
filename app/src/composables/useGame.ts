@@ -202,6 +202,7 @@ interface State {
 	zones: Zones | null
 	legal: LegalAction[]
 	yourTurn: boolean
+	youWon: boolean
 	reveal: RevealMsg | null
 	banner: BannerMsg | null
 	wolfyTaunt: number
@@ -236,6 +237,7 @@ const state = reactive<State>({
 	zones: null,
 	legal: [],
 	yourTurn: false,
+	youWon: false,
 	reveal: null,
 	banner: null,
 	wolfyTaunt: 0,
@@ -593,6 +595,7 @@ export const useGame = defineStore("game", () => {
 		state.zones = msg.zones
 		state.legal = msg.legal || []
 		state.yourTurn = msg.yourTurn
+		state.youWon = !!msg.gameOver && !!msg.youWon
 		state.paused = !!msg.paused
 		state.connectionLost = false
 		// 以服务端视角校准玩家身份, 防止公网延迟/重连等场景下 playerIndex 漂移
@@ -711,14 +714,16 @@ export const useGame = defineStore("game", () => {
 				}
 				break
 			case "bout_ended": {
-				// 最后一局时与结算判定同源(gameEnded.winner), 其余局用事件 winner
-				const meWon = (state.view?.gameEnded?.winner ?? evt.winner) === state.playerIndex
+				// 最后一局直接采用服务端下发的 youWon(权威结果, 不依赖本地身份/时序),
+				// 中间局用事件 winner 与本端视角比较
+				const FINAL = state.view?.gameEnded != null
+				const meWon = FINAL ? !!state.youWon : (evt.winner ?? -1) === state.playerIndex
 				playSfx("roundResult")
 				const banner = {
 					id: evt.id,
 					kind: "bout_end",
 					victory: meWon,
-					reason: deriveReason(evt),
+					reason: FINAL ? resultReason(meWon) : deriveReason(evt),
 					player: evt.winner,
 				} as BannerMsg
 				if (hasReveal) {
@@ -819,17 +824,27 @@ export const useGame = defineStore("game", () => {
 	 */
 	const deriveReason = (evt: GameEvent): string => {
 		const ME = state.playerIndex
-		const OPPONENT = 1 - ME
 		const WINNER = evt.winner ?? -1
 		const MY_NAME = state.players.find((p) => p.index === ME)?.name || "你"
+		// 按己方视角返回文案: 胜者看到"我赢", 败者看到"我输", 两侧不会读到同一句
+		return WINNER === ME ? `${MY_NAME} 赢得了本局` : `${MY_NAME} 输掉了本局`
+	}
+
+	/**
+	 * 整场对局结束时的结果文案(按己方视角, 避免两边读到同一句话)
+	 * @param victory 本端是否获胜
+	 */
+	const resultReason = (victory: boolean): string => {
+		const OPPONENT = 1 - state.playerIndex
 		const OPP_NAME = state.players.find((p) => p.index === OPPONENT)?.name || "对手"
-		return WINNER === ME ? `${OPP_NAME} 输掉本局` : `${MY_NAME} 输掉本局`
+		return victory ? `击败了 ${OPP_NAME}` : `输给了 ${OPP_NAME}`
 	}
 
 	/**
 	 * 创建房间
 	 * @param name 房间名称
 	 * @param mode 房间模式
+	 * @param deckConfig 牌组配置
 	 */
 	const createRoom = (name: string, mode: "private" | "random", deckConfig?: Record<string, number> | null) => {
 		connect(() => {
@@ -900,6 +915,7 @@ export const useGame = defineStore("game", () => {
 		state.view = null
 		state.zones = null
 		state.legal = []
+		state.youWon = false
 		state.reveal = null
 		state.pendingReveal = null
 		state.banner = null
