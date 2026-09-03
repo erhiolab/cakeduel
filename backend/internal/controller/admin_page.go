@@ -33,12 +33,24 @@ button { cursor:pointer; border:0; border-radius:.5rem; padding:.55rem .9rem; fo
 .row { display:flex; flex-wrap:wrap; gap:.45rem; align-items:center; }
 .chip { background:#243140; border:1px solid #35485b; border-radius:2rem; padding:.25rem .6rem; font-size:.7rem; }
 .chip b { color:#fcd34d; }
-.player { border:1px solid #33465a; background:#121a24; border-radius:.6rem; padding:.45rem .6rem; margin-top:.45rem; }
-.player .head { display:flex; align-items:center; gap:.5rem; font-weight:800; }
-.hand { display:flex; gap:.25rem; flex-wrap:wrap; margin-top:.35rem; }
-.hand img { height:3.1rem; border-radius:.3rem; background:#0a0f16; }
-.hand .back { width:2.1rem; height:3.1rem; background:#1f2b39; border-radius:.25rem; display:inline-flex; align-items:center; justify-content:center; font-size:.6rem; color:#8d99a6; }
-.claims span { color:#93c5fd; }
+.room-players { display:flex; flex-direction:column; gap:.5rem; margin-top:.55rem; }
+.room-players.big { display:grid; grid-template-columns:1fr 1fr; gap:.7rem; }
+.room-player { border:1px solid #33465a; background:#121a24; border-radius:.7rem; padding:.55rem .65rem; }
+.room-player .head { display:flex; align-items:center; gap:.5rem; font-weight:800; flex-wrap:wrap; }
+.hand-cards { display:flex; gap:.55rem; flex-wrap:wrap; margin-top:.45rem; }
+.hand-cards .pcard { display:flex; flex-direction:column; align-items:center; gap:.18rem; }
+.hand-cards img { height:5.2rem; width:auto; border-radius:.4rem; background:#0a0f16; box-shadow:0 3px 10px rgba(0,0,0,.35); }
+.hand-cards .card-name { font-size:.68rem; font-weight:700; color:#d6dee7; }
+.claims { margin-top:.45rem; display:flex; flex-wrap:wrap; gap:.4rem; }
+.claim-chip { display:inline-flex; align-items:center; gap:.4rem; padding:.25rem .7rem; border-radius:2rem; font-size:.78rem; font-weight:800; background:#1e3a5f; color:#93c5fd; border:1px solid #3b6ea5; }
+.claim-chip.attack { background:#4a1d24; color:#fca5a5; border-color:#a53b4a; }
+.claim-chip.block { background:#164e4a; color:#5eead4; border-color:#2f857c; }
+body.focus .hand-cards img { height:9rem; }
+body.focus .room-player { padding:.8rem .9rem; }
+body.focus .card-name { font-size:.85rem; }
+body.focus .claim-chip { font-size:.95rem; padding:.35rem .95rem; }
+body.focus .chat { max-height: 16rem; }
+@media (max-width:720px){ .room-players.big { grid-template-columns:1fr; } body.focus .hand-cards img { height:6.5rem; } }
 .chat { margin-top:.5rem; border-top:1px dashed #33465a; padding-top:.45rem; max-height:9rem; overflow:auto; font-size:.75rem; line-height:1.7; }
 .chat .from { color:#fcd34d; font-weight:800; }
 .refresh { margin-left:auto; }
@@ -46,7 +58,7 @@ button { cursor:pointer; border:0; border-radius:.5rem; padding:.55rem .9rem; fo
 #focusView { display:none; }
 body.focus #controlCard, body.focus #mainGrid { display:none; }
 body.focus #focusView { display:block; }
-body.focus .wrap { max-width: 900px; }
+body.focus .wrap { max-width: 1100px; }
 </style>
 </head>
 <body>
@@ -166,17 +178,26 @@ function renderOnline(){
 	});
 }
 function roleText(role){ return {player:"玩家", spectator:"观战", waiting_spectator:"观战等待", matching:"匹配中", online:"在线"}[role] || role; }
-function roomCard(r){
-	var playersHtml = (r.players || []).map(function(p){
-		var hand = (p.hand || []).map(function(n){ return '<img src="/cakeduel/cards/zh-CN/' + encodeURIComponent(n) + '.jpg" alt="' + esc(n) + '" title="' + esc(n) + '"/>'; }).join("");
-		return '<div class="player"><div class="head">' +
+var CARD_ZH = {soldier:"士兵", archer:"弓箭手", wizard:"法师", defender:"盾卫", scientist:"科学家", wolfy:"狼爵士", assassin:"刺客", scout:"斥候", summoner:"召唤师", quartermaster:"军需官", oracle:"神谕师", priest:"牧师", angel:"天使", baacrates:"咩格拉底", agent_u:"特工U", pierrot:"绵顿"};
+function cardZh(k){ return CARD_ZH[k] || k; }
+function splitClaim(s){ var i = String(s || "").indexOf("×"); if (i < 0) return {n: String(s || ""), c: ""}; return {n: String(s).slice(0, i), c: String(s).slice(i + 1)}; }
+function roomCard(r, big){
+	big = !!big;
+	var playersHtml = '<div class="room-players' + (big ? " big" : "") + '">' + (r.players || []).map(function(p){
+		var cards = (p.hand || []).map(function(n){
+			return '<figure class="pcard"><img src="/cakeduel/cards-hd/zh-CN/' + encodeURIComponent(n) + '.jpg" alt="' + esc(cardZh(n)) + '" title="' + esc(cardZh(n)) + '"/><figcaption class="card-name">' + esc(cardZh(n)) + "</figcaption></figure>";
+		}).join("");
+		return '<div class="room-player"><div class="head">' +
 			(p.index === r.attackerIndex ? "⚔️" : "🛡️") + " " + esc(p.name || "空位") +
 			'<span class="pill ' + (p.connected ? "ok" : "bad") + '">' + (p.connected ? "在线" : "离线") + "</span>" +
 			"<span class='pill gold'>🍰 " + p.cakes + "</span>" +
 			"<span class='muted' style='margin-left:auto;'>" + p.handCount + " 张</span>" +
-			'</div><div class="hand">' + (hand || '<span class="back">无牌</span>') + "</div></div>";
+			"</div>" + (cards ? '<div class="hand-cards">' + cards + "</div>" : '<div class="muted" style="margin-top:.45rem;">暂无手牌</div>') + "</div>";
+	}).join("") + "</div>";
+	var claims = (r.claims || []).map(function(s, idx){
+		var part = splitClaim(s);
+		return '<span class="claim-chip ' + (idx === 0 ? "attack" : "block") + '">' + (idx === 0 ? "攻" : "守") + " · " + esc(cardZh(part.n)) + (part.c ? " ×" + esc(part.c) : "") + "</span>";
 	}).join("");
-	var claims = (r.claims || []).map(function(c){ return "<span>" + esc(c) + "</span>"; }).join(" ");
 	var chats = (r.chatHistory || []).map(function(m){ return '<div><span class="from">' + esc(m.name) + ":</span> " + esc(m.text) + "</div>"; }).join("");
 	var followed = state.followCode === r.code;
 	return '<div class="row" style="justify-content:space-between;"><b>🏠 ' + esc(r.code) + "</b>" +
@@ -185,7 +206,7 @@ function roomCard(r){
 		'<div class="row" style="margin-top:.35rem;"><span class="chip">👁 观战 ' + (r.spectatorCount || 0) + "</span>" +
 		"<span class='chip'>第 " + r.roundNumber + " 回合</span>" +
 		"<span class='chip'>比分 " + scoreText(r) + "</span></div>" +
-		'<div class="claims" style="margin-top:.4rem;">' + (claims || '<span class="muted">暂无声明</span>') + "</div>" +
+		'<div class="claims">' + (claims || '<span class="muted">暂无声明</span>') + "</div>" +
 		playersHtml +
 		'<div class="chat">' + (chats || '<div class="muted">暂无聊天记录</div>') + "</div>" +
 		'<div class="row" style="margin-top:.55rem;">' +
@@ -200,7 +221,7 @@ function renderRooms(){
 	list.forEach(function(r){
 		var box = document.createElement("div");
 		box.className = "player";
-		box.innerHTML = roomCard(r);
+		box.innerHTML = roomCard(r, false);
 		el.appendChild(box);
 	});
 	renderFocus();
@@ -223,7 +244,7 @@ function renderFocus(){
 	document.getElementById("focusTitle").textContent = "👁 关注房间 " + state.followCode;
 	var found = state.rooms.find(function(r){ return r.code === state.followCode; });
 	document.getElementById("focusBody").innerHTML = found
-		? roomCard(found)
+		? roomCard(found, true)
 		: '<div class="empty">房间不存在或已关闭<br/><br/><button class="btn-ghost" onclick="exitFollow()">返回房间列表</button></div>';
 }
 function renderSettings(){
