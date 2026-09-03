@@ -142,6 +142,9 @@ export interface ReplayFrame {
 	zones: Zones
 	events: GameEvent[]
 	reveal?: RevealMsg
+	playerHands: [string[], string[]]
+	attackPile: string[]
+	blockPile: string[]
 }
 
 /**
@@ -157,6 +160,7 @@ export interface ReplayData {
 	deckConfig: Record<string, number>
 	roundsToWin: number
 	frames: ReplayFrame[]
+	chats?: ChatMsg[]
 }
 
 /**
@@ -196,6 +200,7 @@ interface State {
 	playerIndex: number
 	players: PlayerInfo[]
 	matching: boolean
+	spectateWait: boolean
 	message: string
 	error: string
 	view: GameView | null
@@ -215,6 +220,7 @@ interface State {
 	paused: boolean
 	connectionLost: boolean
 	opponentStatus: "online" | "offline"
+	spectatorCount: number
 	rematchVotes: [boolean, boolean]
 	deckConfig: Record<string, number> | null
 	spectator: boolean
@@ -231,6 +237,7 @@ const state = reactive<State>({
 	playerIndex: 0,
 	players: [],
 	matching: false,
+	spectateWait: false,
 	message: "",
 	error: "",
 	view: null,
@@ -250,6 +257,7 @@ const state = reactive<State>({
 	paused: false,
 	connectionLost: false,
 	opponentStatus: "online",
+	spectatorCount: 0,
 	rematchVotes: [false, false],
 	deckConfig: null,
 	spectator: false,
@@ -492,6 +500,19 @@ export const useGame = defineStore("game", () => {
 				state.players = msg.players || []
 				state.deckConfig = msg.deckConfig || null
 				state.matching = false
+				state.spectateWait = false
+				state.spectatorCount = msg.spectatorCount || 0
+				if (Array.isArray(msg.chatHistory)) {
+					state.chatMessages = (msg.chatHistory as ChatMsg[]).map((m) => ({
+						from: m.from ?? 0,
+						name: m.name ?? "",
+						text: m.text ?? "",
+						ts: m.ts ?? Date.now(),
+					}))
+				} else {
+					// 新房间不应残留上一局的聊天
+					state.chatMessages = []
+				}
 				markResume()
 				state.connectionLost = false
 				state.paused = false
@@ -553,6 +574,26 @@ export const useGame = defineStore("game", () => {
 			case "spectator_state":
 				applySpectatorState(msg)
 				break
+			case "spectate_waiting":
+				state.roomCode = msg.roomCode || state.roomCode
+				state.mode = msg.mode || state.mode
+				state.players = msg.players || state.players
+				state.spectateWait = true
+				state.message = msg.message || "正在等待对局开始…"
+				break
+			case "chat_history":
+				if (Array.isArray(msg.chatHistory)) {
+					state.chatMessages = (msg.chatHistory as ChatMsg[]).map((m) => ({
+						from: m.from ?? 0,
+						name: m.name ?? "",
+						text: m.text ?? "",
+						ts: m.ts ?? Date.now(),
+					}))
+				}
+				break
+			case "spectator_count":
+				state.spectatorCount = msg.spectatorCount || 0
+				break
 			case "replay_data":
 				if (msg.replay) {
 					saveReplay(msg.replay as ReplayData)
@@ -564,7 +605,7 @@ export const useGame = defineStore("game", () => {
 					from: msg.from ?? 0,
 					name: msg.name ?? "",
 					text: msg.text ?? "",
-					ts: Date.now(),
+					ts: msg.ts ?? Date.now(),
 				})
 				if (state.chatMessages.length > 100) {
 					state.chatMessages.splice(0, state.chatMessages.length - 100)
@@ -598,6 +639,7 @@ export const useGame = defineStore("game", () => {
 		state.youWon = !!msg.gameOver && !!msg.youWon
 		state.paused = !!msg.paused
 		state.connectionLost = false
+		state.spectatorCount = msg.spectatorCount || 0
 		// 以服务端视角校准玩家身份, 防止公网延迟/重连等场景下 playerIndex 漂移
 		// 导致横幅胜负判断与实际结果不一致
 		if (msg.view?.me?.index != null) {
@@ -641,6 +683,7 @@ export const useGame = defineStore("game", () => {
 		state.zones = msg.zones as Zones
 		state.paused = !!msg.spectatorView.paused
 		state.connectionLost = false
+		state.spectatorCount = msg.spectatorCount || state.spectatorCount
 		state.screen = "spectate"
 		if (msg.reveal) startReveal(msg.reveal as RevealMsg)
 	}
@@ -856,11 +899,19 @@ export const useGame = defineStore("game", () => {
 	 * 加入房间
 	 * @param code 房间代码
 	 * @param name 房间名称
+	 * @param as 身份: player 加入 / spectator 观战
 	 */
-	const joinRoom = (code: string, name: string) => {
+	const joinRoom = (code: string, name: string, as: "player" | "spectator" = "player") => {
 		connect(() => {
-			send({type: "join_room", code, name})
+			send({type: "join_room", code, name, as})
 		})
+	}
+
+	/**
+	 * 取消观战等待(房间未开局前退出)
+	 */
+	const cancelSpectate = () => {
+		leave()
 	}
 
 	/**
@@ -921,14 +972,17 @@ export const useGame = defineStore("game", () => {
 		state.banner = null
 		state.wolfyTaunt = 0
 		state.matching = false
+		state.spectateWait = false
 		state.handReveal = null
 		state.paused = false
 		state.connectionLost = false
 		state.opponentStatus = "online"
+		state.spectatorCount = 0
 		state.rematchVotes = [false, false]
 		state.deckConfig = null
 		state.spectator = false
 		state.spectatorView = null
+		state.chatMessages = []
 	}
 
 	/**
@@ -953,6 +1007,7 @@ export const useGame = defineStore("game", () => {
 		state: readonly(state),
 		createRoom,
 		joinRoom,
+		cancelSpectate,
 		startGame,
 		act,
 		rematch,

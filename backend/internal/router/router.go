@@ -3,6 +3,7 @@ package router
 import (
 	"cakeduel-backend/internal/app"
 	"cakeduel-backend/internal/config"
+	"cakeduel-backend/internal/controller"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +25,14 @@ func Register(r *Router, app *app.App) {
 
 	// 游戏 WebSocket
 	r.handleFunc(http.MethodGet, "/ws", GameWSHandler(app))
+
+	// 管理员页面与接口
+	r.handleFunc(http.MethodGet, "/admin", controller.AdminPageHandler())
+	r.handleFunc(http.MethodGet, "/api/admin/challenge", controller.AdminChallengeHandler(app))
+	r.handleFunc(http.MethodPost, "/api/admin/verify", controller.AdminVerifyHandler(app))
+	r.handleFunc(http.MethodGet, "/api/admin/overview", controller.AdminOverviewHandler(app))
+	r.handleFunc(http.MethodGet, "/api/admin/rooms", controller.AdminRoomsHandler(app))
+	r.handleFunc(http.MethodPost, "/api/admin/rooms/dismiss", controller.AdminDismissHandler(app))
 
 	// 前端静态资源(可选)
 	staticPath := config.Get().Gateway.StaticPath

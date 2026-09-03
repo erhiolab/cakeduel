@@ -14,11 +14,13 @@ const props = withDefaults(
 		reveal?: RevealMsg | null
 		cardHeight: number
 		compact?: boolean
+		showHands?: boolean
 	}>(),
 	{
 		players: null,
 		reveal: null,
 		compact: false,
+		showHands: false,
 	},
 )
 
@@ -109,22 +111,34 @@ const paused = computed(() => !!props.view?.paused)
 	<div class="spectator-table" :class="{ compact }">
 		<div class="board">
 			<!-- 上方玩家(玩家 0) -->
-			<div class="player-row" :class="{ active: activeIndex === 0, ended: view?.gameEnded }">
-				<div class="player-chip">
-					<span class="avatar">{{ nameOf(0)?.slice(0, 1) || "A" }}</span>
-					<div class="player-meta">
-						<span class="p-name">{{ nameOf(0) || "玩家 1" }}</span>
-						<span class="p-sub">
-							<img src="/cakeduel/token-cake.png" alt="" draggable="false"/>
-							{{ cakesOf(0) }}
-							<img class="back" src="/cakeduel/card-back-hd.jpg" alt="" draggable="false"/>
-							{{ handOf(0) }} 张
-						</span>
+			<div class="player-side">
+				<div class="player-row" :class="{ active: activeIndex === 0, ended: view?.gameEnded }">
+					<div class="player-chip">
+						<span class="avatar">{{ nameOf(0)?.slice(0, 1) || "A" }}</span>
+						<div class="player-meta">
+							<span class="p-name">{{ nameOf(0) || "玩家 1" }}</span>
+							<span class="p-sub">
+								<img src="/cakeduel/token-cake.png" alt="" draggable="false"/>
+								{{ cakesOf(0) }}
+								<img class="back" src="/cakeduel/card-back-hd.jpg" alt="" draggable="false"/>
+								{{ handOf(0) }} 张
+							</span>
+						</div>
+						<span v-if="activeIndex === 0 && !view?.gameEnded" class="turn-badge">{{ phaseText }}</span>
 					</div>
-					<span v-if="activeIndex === 0 && !view?.gameEnded" class="turn-badge">{{ phaseText }}</span>
+					<div class="wins">
+						<span v-for="n in winsOf(0)" :key="`a${n}`">🏆</span>
+					</div>
 				</div>
-				<div class="wins">
-					<span v-for="n in winsOf(0)" :key="`a${n}`">🏆</span>
+				<div v-if="showHands && (zones?.playerHand ?? []).length" class="hand-row">
+					<span class="hand-label">手牌</span>
+					<img
+						v-for="(card, i) in zones?.playerHand ?? []"
+						:key="`ph${card.entityId ?? i}`"
+						:src="card.name ? cardImage(card.name) : CARD_BACK"
+						:alt="card.name ?? 'back'"
+						draggable="false"
+					/>
 				</div>
 			</div>
 
@@ -189,7 +203,7 @@ const paused = computed(() => !!props.view?.paused)
 				</div>
 
 				<div class="table-hint" v-if="!view?.gameEnded">
-					观战视角 · 手牌背面朝下，质疑开牌时自动揭示
+					{{ showHands ? "回放视角 · 展示双方手牌与真实牌面" : "观战视角 · 手牌背面朝下，质疑开牌时自动揭示" }}
 				</div>
 				<div v-else class="table-hint ended">
 					🎉 对局结束 · 获胜方：{{ nameOf(view?.gameEnded?.winner ?? 0) || `玩家 ${(view?.gameEnded?.winner ?? 0) + 1}` }}
@@ -197,22 +211,34 @@ const paused = computed(() => !!props.view?.paused)
 			</div>
 
 			<!-- 下方玩家(玩家 1) -->
-			<div class="player-row" :class="{ active: activeIndex === 1, ended: view?.gameEnded }">
-				<div class="player-chip">
-					<span class="avatar">{{ nameOf(1)?.slice(0, 1) || "B" }}</span>
-					<div class="player-meta">
-						<span class="p-name">{{ nameOf(1) || `玩家 ${1 + 1}` }}</span>
-						<span class="p-sub">
-							<img src="/cakeduel/token-cake.png" alt="" draggable="false"/>
-							{{ cakesOf(1) }}
-							<img class="back" src="/cakeduel/card-back-hd.jpg" alt="" draggable="false"/>
-							{{ handOf(1) }} 张
-						</span>
+			<div class="player-side">
+				<div class="player-row" :class="{ active: activeIndex === 1, ended: view?.gameEnded }">
+					<div class="player-chip">
+						<span class="avatar">{{ nameOf(1)?.slice(0, 1) || "B" }}</span>
+						<div class="player-meta">
+							<span class="p-name">{{ nameOf(1) || `玩家 ${1 + 1}` }}</span>
+							<span class="p-sub">
+								<img src="/cakeduel/token-cake.png" alt="" draggable="false"/>
+								{{ cakesOf(1) }}
+								<img class="back" src="/cakeduel/card-back-hd.jpg" alt="" draggable="false"/>
+								{{ handOf(1) }} 张
+							</span>
+						</div>
+						<span v-if="activeIndex === 1 && !view?.gameEnded" class="turn-badge">{{ phaseText }}</span>
 					</div>
-					<span v-if="activeIndex === 1 && !view?.gameEnded" class="turn-badge">{{ phaseText }}</span>
+					<div class="wins">
+						<span v-for="n in winsOf(1)" :key="`b${n}`">🏆</span>
+					</div>
 				</div>
-				<div class="wins">
-					<span v-for="n in winsOf(1)" :key="`b${n}`">🏆</span>
+				<div v-if="showHands && (zones?.opponentHand ?? []).length" class="hand-row">
+					<span class="hand-label">手牌</span>
+					<img
+						v-for="(card, i) in zones?.opponentHand ?? []"
+						:key="`oh${card.entityId ?? i}`"
+						:src="card.name ? cardImage(card.name) : CARD_BACK"
+						:alt="card.name ?? 'back'"
+						draggable="false"
+					/>
 				</div>
 			</div>
 		</div>
@@ -268,6 +294,39 @@ const paused = computed(() => !!props.view?.paused)
 	align-items: center;
 	justify-content: space-between;
 	gap: 0.6rem;
+}
+
+.player-side {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 0.18rem;
+}
+
+.hand-row {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.22rem;
+	flex-wrap: wrap;
+	padding: 0.14rem 0.4rem;
+	border-radius: 0.55rem;
+	background: rgba(20, 28, 38, 0.4);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hand-row .hand-label {
+	font-size: 0.6rem;
+	font-weight: 800;
+	color: rgba(255, 230, 190, 0.55);
+	margin-right: 0.2rem;
+}
+
+.hand-row img {
+	height: 2.6rem;
+	width: auto;
+	border-radius: 0.22rem;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 .player-chip {
@@ -648,6 +707,19 @@ const paused = computed(() => !!props.view?.paused)
 .spectator-table.compact .pile-empty img {
 	width: 1.6rem;
 	height: 2.2rem;
+}
+
+.spectator-table.compact .hand-row {
+	padding: 0.1rem 0.25rem;
+	gap: 0.12rem;
+}
+
+.spectator-table.compact .hand-row img {
+	height: 1.8rem;
+}
+
+.spectator-table.compact .hand-row .hand-label {
+	font-size: 0.52rem;
 }
 
 @keyframes flip-in {

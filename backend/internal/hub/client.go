@@ -25,6 +25,7 @@ type Client struct {
 	matching     bool
 	disconnected bool
 	spectating   bool
+	waiting      bool
 	closeOnce    sync.Once
 }
 
@@ -147,33 +148,36 @@ func (c *Client) sendError(message string) {
 
 // ServerMessage 服务端消息
 type ServerMessage struct {
-	Type          string            `json:"type"`
-	RoomCode      string            `json:"roomCode,omitempty"`
-	Mode          string            `json:"mode,omitempty"`
-	PlayerIndex   int               `json:"playerIndex"`
-	From          int               `json:"from,omitempty"`
-	Name          string            `json:"name,omitempty"`
-	Text          string            `json:"text,omitempty"`
-	Players       []PlayerInfo      `json:"players,omitempty"`
-	LeftIndex     int               `json:"leftIndex,omitempty"`
-	Reason        string            `json:"reason,omitempty"`
-	Seed          uint32            `json:"seed,omitempty"`
-	View          *PlayerViewMsg    `json:"view,omitempty"`
-	Zones         *ZonesMsg         `json:"zones,omitempty"`
-	Legal         []LegalMsg        `json:"legal"`
-	Events        []EventMsg        `json:"events"`
-	Reveal        *RevealMsg        `json:"reveal,omitempty"`
-	YourTurn      bool              `json:"yourTurn,omitempty"`
-	GameOver      bool              `json:"gameOver,omitempty"`
-	YouWon        bool              `json:"youWon,omitempty"`
-	Paused        bool              `json:"paused,omitempty"`
-	RematchVotes  [2]bool           `json:"rematchVotes,omitempty"`
-	DeckConfig    map[string]int    `json:"deckConfig,omitempty"`
-	Spectator     bool              `json:"spectator,omitempty"`
-	SpectatorView *SpectatorViewMsg `json:"spectatorView,omitempty"`
-	Replay        *ReplayDataMsg    `json:"replay,omitempty"`
-	Message       string            `json:"message,omitempty"`
-	Connected     []bool            `json:"connected,omitempty"`
+	Type           string            `json:"type"`
+	RoomCode       string            `json:"roomCode,omitempty"`
+	Mode           string            `json:"mode,omitempty"`
+	PlayerIndex    int               `json:"playerIndex"`
+	From           int               `json:"from,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	Text           string            `json:"text,omitempty"`
+	Ts             int64             `json:"ts,omitempty"`
+	Players        []PlayerInfo      `json:"players,omitempty"`
+	LeftIndex      int               `json:"leftIndex,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Seed           uint32            `json:"seed,omitempty"`
+	View           *PlayerViewMsg    `json:"view,omitempty"`
+	Zones          *ZonesMsg         `json:"zones,omitempty"`
+	Legal          []LegalMsg        `json:"legal"`
+	Events         []EventMsg        `json:"events"`
+	Reveal         *RevealMsg        `json:"reveal,omitempty"`
+	YourTurn       bool              `json:"yourTurn,omitempty"`
+	GameOver       bool              `json:"gameOver,omitempty"`
+	YouWon         bool              `json:"youWon,omitempty"`
+	Paused         bool              `json:"paused,omitempty"`
+	RematchVotes   [2]bool           `json:"rematchVotes,omitempty"`
+	DeckConfig     map[string]int    `json:"deckConfig,omitempty"`
+	Spectator      bool              `json:"spectator,omitempty"`
+	SpectatorView  *SpectatorViewMsg `json:"spectatorView,omitempty"`
+	SpectatorCount int               `json:"spectatorCount,omitempty"`
+	ChatHistory    []ChatMsgData     `json:"chatHistory,omitempty"`
+	Replay         *ReplayDataMsg    `json:"replay,omitempty"`
+	Message        string            `json:"message,omitempty"`
+	Connected      []bool            `json:"connected,omitempty"`
 }
 
 // ClientMessage 客户端消息
@@ -182,9 +186,18 @@ type ClientMessage struct {
 	Name       string         `json:"name,omitempty"`
 	Mode       string         `json:"mode,omitempty"`
 	Code       string         `json:"code,omitempty"`
+	As         string         `json:"as,omitempty"`
 	Action     *ActionMsg     `json:"action,omitempty"`
 	Text       string         `json:"text,omitempty"`
 	DeckConfig map[string]int `json:"deckConfig,omitempty"`
+}
+
+// ChatMsgData 服务端保存的聊天消息(带时间戳, 供历史/观战/回放)
+type ChatMsgData struct {
+	From int    `json:"from"`
+	Name string `json:"name"`
+	Text string `json:"text"`
+	Ts   int64  `json:"ts"`
 }
 
 // ActionMsg 动作消息

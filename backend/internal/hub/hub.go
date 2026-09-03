@@ -22,6 +22,8 @@ type Hub struct {
 	matching        []*Client
 	clientsByToken  map[string]*Client
 	clients         map[*Client]struct{}
+	kvMu            sync.Mutex
+	kvMem           map[string]kvItem
 	gameConfig      game.GameConfig
 	roomCodeLen     int
 	matchTimeout    time.Duration
@@ -38,6 +40,7 @@ func NewHub(cfg game.GameConfig, rdb redis.Cmdable) *Hub {
 		rooms:           make(map[string]*Room),
 		clientsByToken:  make(map[string]*Client),
 		clients:         make(map[*Client]struct{}),
+		kvMem:           make(map[string]kvItem),
 		gameConfig:      cfg,
 		roomCodeLen:     6,
 		matchTimeout:    60 * time.Minute,
@@ -126,8 +129,9 @@ func (h *Hub) registerClient(c *Client) {
 			// 恢复状态: 对局中下发最新状态, 否则回到大厅
 			if room.GameStarted && room.Game != nil {
 				room.broadcastGameState(nil)
+				c.Send(ServerMessage{Type: "chat_history", RoomCode: room.Code, ChatHistory: room.chatSnapshot()})
 			} else {
-				c.Send(ServerMessage{Type: "room_joined", RoomCode: room.Code, Mode: room.Mode, PlayerIndex: idx, Players: room.playersInfo(), DeckConfig: room.DeckConfig})
+				c.Send(ServerMessage{Type: "room_joined", RoomCode: room.Code, Mode: room.Mode, PlayerIndex: idx, Players: room.playersInfo(), DeckConfig: room.DeckConfig, ChatHistory: room.chatSnapshot()})
 			}
 			logger.Log.Info("玩家重连成功", zap.String("room", room.Code), zap.Int("player", idx))
 			return
@@ -237,8 +241,8 @@ func (h *Hub) Chat(c *Client, text string) {
 		c.sendError("你不在任何房间中")
 		return
 	}
-	if c.spectating {
-		// 观战席只读, 不参与玩家聊天
+	if c.spectating || c.waiting {
+		// 观战/等待观战只读, 不参与玩家聊天
 		return
 	}
 	text = sanitizeName(text)
@@ -250,12 +254,19 @@ func (h *Hub) Chat(c *Client, text string) {
 		runes = runes[:200]
 		text = string(runes)
 	}
-	msg := ServerMessage{Type: "chat", From: c.playerIndex, Name: c.Name, Text: text}
+	room.appendChat(c.playerIndex, c.Name, text)
+	msg := ServerMessage{Type: "chat", From: c.playerIndex, Name: c.Name, Text: text, Ts: time.Now().UnixMilli()}
 	for _, cl := range room.Clients {
 		if cl != nil && cl.room == room {
 			cl.Send(msg)
 		}
 	}
+	for _, sp := range room.Spectators {
+		if sp.room == room {
+			sp.Send(msg)
+		}
+	}
+	h.persistRoomRecord(room)
 }
 
 // CreateRoom 创建房间
@@ -298,6 +309,7 @@ func (h *Hub) CreateRoom(c *Client, msg *ClientMessage) {
 	room.DeckConfig = game.NormalizeDeckConfig(msg.DeckConfig)
 	room.addClient(c, 0)
 	h.rooms[room.Code] = room
+	h.persistRoomRecord(room)
 	c.Send(ServerMessage{
 		Type:        "room_joined",
 		RoomCode:    room.Code,
@@ -328,6 +340,7 @@ func (h *Hub) pairRandom(c, waiter *Client) {
 	room.addClient(c, 0)
 	room.addClient(waiter, 1)
 	h.rooms[room.Code] = room
+	h.persistRoomRecord(room)
 	h.markOnline(c)
 	h.markOnline(waiter)
 	h.announceRoom(room)
@@ -358,7 +371,7 @@ func (h *Hub) matchTimeoutChecker(c *Client) {
 	c.Send(ServerMessage{Type: "match_timeout", Message: "匹配超时, 请重试"})
 }
 
-// JoinRoom 加入房间
+// JoinRoom 加入房间(玩家 / 观战二选一)
 func (h *Hub) JoinRoom(c *Client, msg *ClientMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -373,51 +386,82 @@ func (h *Hub) JoinRoom(c *Client, msg *ClientMessage) {
 	code := sanitizeCode(msg.Code)
 	room, ok := h.rooms[code]
 	if !ok {
-		c.sendError("房间不存在或已关闭")
+		c.sendError("房间不存在")
 		return
 	}
-	if room.GameStarted && room.Clients[0] != nil && room.Clients[1] != nil {
-		// 满员且对局进行中: 以观战身份加入(看不到任何一方手牌)
-		c.Name = sanitizeName(msg.Name)
+	if msg.As == "spectator" {
+		h.joinAsSpectator(c, room, msg)
+		return
+	}
+	h.joinAsPlayer(c, room, msg)
+}
+
+// joinAsPlayer 以玩家身份加入(满员/已开局会明确拒绝)
+func (h *Hub) joinAsPlayer(c *Client, room *Room, msg *ClientMessage) {
+	if room.GameStarted {
+		c.sendError("对局已经开始，只能观战")
+		return
+	}
+	if room.Clients[0] != nil && room.Clients[1] != nil {
+		c.sendError("房间已满，无法加入")
+		return
+	}
+	idx := 0
+	if room.Clients[0] != nil {
+		idx = 1
+	}
+	room.addClient(c, idx)
+	c.Name = sanitizeName(msg.Name)
+	h.markOnline(c)
+	h.persistRoomRecord(room)
+	c.Send(ServerMessage{
+		Type:        "room_joined",
+		RoomCode:    room.Code,
+		Mode:        room.Mode,
+		PlayerIndex: idx,
+		Players:     room.playersInfo(),
+		DeckConfig:  room.DeckConfig,
+		ChatHistory: room.chatSnapshot(),
+	})
+	h.announceRoom(room)
+	go room.waitForStart()
+}
+
+// joinAsSpectator 以观战身份加入(需持有 hub 锁)
+// 对局未开始/人数不足时先挂起等待, 开局后自动转为正式观战
+func (h *Hub) joinAsSpectator(c *Client, room *Room, msg *ClientMessage) {
+	c.Name = sanitizeName(msg.Name)
+	h.markOnline(c)
+	started := room.GameStarted && room.Game != nil && room.Clients[0] != nil && room.Clients[1] != nil
+	if started {
 		room.addSpectator(c)
-		h.markOnline(c)
+		room.notifySpectatorCount()
+		h.persistRoomRecord(room)
 		c.Send(ServerMessage{
-			Type:        "room_joined",
-			RoomCode:    room.Code,
-			Mode:        room.Mode,
-			PlayerIndex: -1,
-			Players:     room.playersInfo(),
-			DeckConfig:  room.DeckConfig,
-			Spectator:   true,
+			Type:           "room_joined",
+			RoomCode:       room.Code,
+			Mode:           room.Mode,
+			PlayerIndex:    -1,
+			Players:        room.playersInfo(),
+			DeckConfig:     room.DeckConfig,
+			Spectator:      true,
+			ChatHistory:    room.chatSnapshot(),
+			SpectatorCount: len(room.Spectators),
 		})
 		room.broadcastSpectatorState(nil, nil)
 		return
 	}
-	if room.GameStarted {
-		c.sendError("对局已经开始, 无法加入")
-		return
-	}
-	if room.Clients[0] == nil || room.Clients[1] == nil {
-		idx := 0
-		if room.Clients[0] != nil {
-			idx = 1
-		}
-		room.addClient(c, idx)
-		c.Name = sanitizeName(msg.Name)
-		h.markOnline(c)
-		c.Send(ServerMessage{
-			Type:        "room_joined",
-			RoomCode:    room.Code,
-			Mode:        room.Mode,
-			PlayerIndex: idx,
-			Players:     room.playersInfo(),
-			DeckConfig:  room.DeckConfig,
-		})
-		h.announceRoom(room)
-		go room.waitForStart()
-		return
-	}
-	c.sendError("房间已满")
+	// 房间存在但还没开局: 挂起等待, 开局后自动进入观战
+	room.addWaitingSpectator(c)
+	h.persistRoomRecord(room)
+	c.Send(ServerMessage{
+		Type:        "spectate_waiting",
+		RoomCode:    room.Code,
+		Mode:        room.Mode,
+		PlayerIndex: -1,
+		Players:     room.playersInfo(),
+		Message:     "房间人数不足或对局未开始，等待开局后自动进入观战",
+	})
 }
 
 // StartGame 开始游戏
@@ -429,7 +473,7 @@ func (h *Hub) StartGame(c *Client) {
 		c.sendError("你不在任何房间中")
 		return
 	}
-	if c.spectating || room.Clients[c.playerIndex] != c {
+	if c.spectating || c.waiting || room.Clients[c.playerIndex] != c {
 		h.mu.Unlock()
 		c.sendError("观战模式不能开始对局")
 		return
@@ -457,7 +501,7 @@ func (h *Hub) HandleAction(c *Client, action *ActionMsg) {
 		c.sendError("当前没有进行中的对局")
 		return
 	}
-	if c.spectating || room.Clients[c.playerIndex] != c {
+	if c.spectating || c.waiting || room.Clients[c.playerIndex] != c {
 		h.mu.Unlock()
 		c.sendError("观战模式不能操作对局")
 		return
@@ -483,7 +527,7 @@ func (h *Hub) Rematch(c *Client) {
 		c.sendError("你不在任何房间中")
 		return
 	}
-	if c.spectating || room.Clients[c.playerIndex] != c {
+	if c.spectating || c.waiting || room.Clients[c.playerIndex] != c {
 		h.mu.Unlock()
 		c.sendError("观战模式不能操作对局")
 		return
@@ -539,9 +583,13 @@ func (h *Hub) leaveLocked(c *Client, graceful bool) {
 		c.Close()
 		return
 	}
-	if c.spectating {
-		// 观战没有席位, 断开即移除, 不进入重连宽容期
-		room.removeSpectator(c)
+	if c.spectating || c.waiting {
+		// 观战/等待观战没有席位, 断开即移除, 不进入重连宽容期
+		if c.spectating {
+			room.removeSpectator(c)
+		} else {
+			room.removeWaitingSpectator(c)
+		}
 		h.forgetClient(c)
 		return
 	}

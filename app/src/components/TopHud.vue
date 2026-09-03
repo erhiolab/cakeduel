@@ -210,6 +210,9 @@ const pressEnd = () => {
 				</div>
 			</div>
 			<div class="hud-right">
+				<div v-if="state.spectatorCount > 0" class="viewer-pill" title="当前观战人数">
+					👁 {{ state.spectatorCount }}
+				</div>
 				<div
 					v-if="state.yourTurn && state.turnRemaining > 0"
 					class="countdown"
@@ -452,6 +455,18 @@ const pressEnd = () => {
 	color: #fbbf24;
 	background: rgba(245, 158, 11, 0.12);
 	border: 1px solid rgba(245, 158, 11, 0.3);
+	white-space: nowrap;
+}
+
+.viewer-pill {
+	margin-right: 0.6rem;
+	border-radius: 2rem;
+	padding: 0.3rem 0.7rem;
+	font-size: 0.75rem;
+	font-weight: 800;
+	color: #a7f3d0;
+	background: rgba(16, 90, 70, 0.35);
+	border: 1px solid rgba(110, 231, 183, 0.3);
 	white-space: nowrap;
 }
 

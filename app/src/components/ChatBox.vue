@@ -11,6 +11,14 @@ const MAX_UNREAD_DISPLAY = 99
 // 游戏状态
 const {state, sendChat} = game
 
+// 只读模式(观战查看历史, 不显示输入框)
+const props = withDefaults(
+	defineProps<{
+		readonly?: boolean
+	}>(),
+	{readonly: false},
+)
+
 // 面板是否展开
 const open = ref(false)
 
@@ -25,7 +33,7 @@ const unread = ref(0)
 
 // 新消息: 未展开时累计未读, 展开时滚动到底部
 watch(() => state.chatMessages.length, async () => {
-	if (!open.value) unread.value++
+	if (!open.value && !props.readonly) unread.value++
 	await nextTick()
 	if (listEl.value) listEl.value.scrollTop = listEl.value.scrollHeight
 })
@@ -53,7 +61,7 @@ const submit = () => {
 		<Transition name="pop">
 			<div v-if="open" class="chat-panel glass">
 				<div class="chat-head">
-					<span>局内对话</span>
+					<span>{{ props.readonly ? "对局对话（观战）" : "局内对话" }}</span>
 					<button class="chat-close" @click="toggle">—</button>
 				</div>
 				<div ref="listEl" class="chat-list">
@@ -62,13 +70,13 @@ const submit = () => {
 						v-for="(m, i) in state.chatMessages"
 						:key="i"
 						class="chat-msg"
-						:class="{ mine: m.from === state.playerIndex }"
+						:class="{ mine: !props.readonly && m.from === state.playerIndex }"
 					>
-						<span class="chat-name">{{ m.from === state.playerIndex ? "我" : m.name }}</span>
+						<span class="chat-name">{{ !props.readonly && m.from === state.playerIndex ? "我" : m.name }}</span>
 						<span class="chat-bubble">{{ m.text }}</span>
 					</div>
 				</div>
-				<form class="chat-input" @submit.prevent="submit">
+				<form v-if="!props.readonly" class="chat-input" @submit.prevent="submit">
 					<input v-model="draft" :maxlength="MAX_MESSAGE_LENGTH" placeholder="输入消息…"/>
 					<button type="submit" :disabled="!draft.trim()">发送</button>
 				</form>

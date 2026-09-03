@@ -10,10 +10,13 @@ const MAX_REPLAY_FRAMES = 600
 
 // ReplayFrameMsg 回放的一帧(与观战视角同构, 不含任何私有手牌信息)
 type ReplayFrameMsg struct {
-	View   *SpectatorViewMsg `json:"view"`
-	Zones  *ZonesMsg         `json:"zones"`
-	Events []EventMsg        `json:"events"`
-	Reveal *RevealMsg        `json:"reveal,omitempty"`
+	View        *SpectatorViewMsg `json:"view"`
+	Zones       *ZonesMsg         `json:"zones"`
+	Events      []EventMsg        `json:"events"`
+	Reveal      *RevealMsg        `json:"reveal,omitempty"`
+	PlayerHands [2][]string       `json:"playerHands"`
+	AttackPile  []string          `json:"attackPile"`
+	BlockPile   []string          `json:"blockPile"`
 }
 
 // ReplayDataMsg 对局回放数据
@@ -27,6 +30,7 @@ type ReplayDataMsg struct {
 	DeckConfig  map[string]int   `json:"deckConfig"`
 	RoundsToWin int              `json:"roundsToWin"`
 	Frames      []ReplayFrameMsg `json:"frames"`
+	Chats       []ChatMsgData    `json:"chats"`
 }
 
 // recordReplayFrame 在每次状态广播时记录一帧公开状态(需持有 room 锁)
@@ -39,12 +43,35 @@ func (r *Room) recordReplayFrame(events []game.Event, reveal *RevealMsg) {
 	if len(events) == 0 && reveal == nil {
 		return
 	}
-	r.replayFrames = append(r.replayFrames, ReplayFrameMsg{
+	frame := ReplayFrameMsg{
 		View:   buildSpectatorView(s),
 		Zones:  buildSpectatorZones(s, events),
 		Events: eventMsgsFromFiltered(game.FilterPublicEvents(events, s.CardNames)),
 		Reveal: reveal,
-	})
+	}
+	// 回放记录双方手牌与出牌堆的真实牌面(观战看不到, 回放可见)
+	for p := 0; p < 2; p++ {
+		for _, id := range s.Players[p].Hand {
+			if id >= 0 && id < len(s.CardNames) {
+				frame.PlayerHands[p] = append(frame.PlayerHands[p], s.CardNames[id])
+			}
+		}
+	}
+	if s.AttackingClaim != nil {
+		for _, id := range s.AttackingClaim.CardIDs {
+			if id >= 0 && id < len(s.CardNames) {
+				frame.AttackPile = append(frame.AttackPile, s.CardNames[id])
+			}
+		}
+	}
+	if s.BlockingClaim != nil {
+		for _, id := range s.BlockingClaim.CardIDs {
+			if id >= 0 && id < len(s.CardNames) {
+				frame.BlockPile = append(frame.BlockPile, s.CardNames[id])
+			}
+		}
+	}
+	r.replayFrames = append(r.replayFrames, frame)
 }
 
 // buildReplayData 汇总当前回放数据(需持有 room 锁)
@@ -62,6 +89,7 @@ func (r *Room) buildReplayData() *ReplayDataMsg {
 		DeckConfig:  map[string]int{},
 		RoundsToWin: s.Config.RoundsToWin,
 		Frames:      append([]ReplayFrameMsg{}, r.replayFrames...),
+		Chats:       r.chatSnapshot(),
 	}
 	for i, c := range r.Clients {
 		if c != nil {

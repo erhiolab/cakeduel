@@ -3,6 +3,7 @@ import {computed, onMounted, onUnmounted, ref} from "vue"
 import {game} from "../composables/useGame"
 import SpectatorTable from "../components/SpectatorTable.vue"
 import {audioState, toggleBgm} from "../game/audio"
+import ChatBox from "../components/ChatBox.vue"
 
 // 游戏状态
 const {state, leave} = game
@@ -58,6 +59,7 @@ onUnmounted(() => {
 			</div>
 			<div class="bar-center">
 				<span v-if="state.roomCode" class="room">房间 {{ state.roomCode }}</span>
+				<span v-if="state.spectatorCount > 0" class="viewer-tag">👁 {{ state.spectatorCount }} 人观战</span>
 				<span v-if="state.spectatorView?.gameEnded" class="ended-tag">对局结束</span>
 			</div>
 			<div class="bar-right">
@@ -78,6 +80,7 @@ onUnmounted(() => {
 				<div v-if="state.toast" class="toast glass">{{ state.toast }}</div>
 			</Transition>
 		</main>
+		<ChatBox readonly/>
 	</div>
 </template>
 
@@ -196,6 +199,17 @@ onUnmounted(() => {
 	color: #3a2c1f;
 	background: linear-gradient(135deg, #f5c54a, #e8a23a);
 	animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
+.viewer-tag {
+	padding: 0.25rem 0.7rem;
+	border-radius: 2rem;
+	font-size: 0.72rem;
+	font-weight: 800;
+	color: #a7f3d0;
+	background: rgba(16, 90, 70, 0.4);
+	border: 1px solid rgba(110, 231, 183, 0.3);
+	white-space: nowrap;
 }
 
 .stage {

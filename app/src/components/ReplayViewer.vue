@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, onUnmounted, ref, watch} from "vue"
-import type {PlayerInfo, ReplayData} from "../composables/useGame"
+import type {CardEntity, PlayerInfo, ReplayData, Zones} from "../composables/useGame"
 import SpectatorTable from "./SpectatorTable.vue"
 
 // 自动播放步进间隔(ms)
@@ -31,6 +31,30 @@ const safeTotal = computed(() => Math.max(1, total.value))
 
 // 当前帧
 const frame = computed(() => props.replay.frames[current.value] ?? props.replay.frames[0])
+
+// 回放专用完整牌面(双方手牌/出牌堆都带真实牌名, 观战不可见)
+const replayZones = computed<Zones | null>(() => {
+	const F = frame.value
+	if (!F || !F.zones) return null
+	const NAMES = (list: string[] | undefined): CardEntity[] =>
+		(list || []).map((name, i) => ({entityId: i, name}))
+	return {
+		...F.zones,
+		playerHand: NAMES(F.playerHands?.[0]),
+		opponentHand: NAMES(F.playerHands?.[1]),
+		attackPile: NAMES(F.attackPile),
+		blockPile: NAMES(F.blockPile),
+		revealedPileCards: {...(F.zones.revealedPileCards ?? {})},
+	}
+})
+
+// 是否显示聊天记录
+const showChat = ref(false)
+
+// 聊天记录开关
+const toggleChat = () => {
+	showChat.value = !showChat.value
+}
 
 // 玩家信息(供观战牌桌显示名字)
 const playerInfos = computed<PlayerInfo[]>(() =>
@@ -152,13 +176,27 @@ onUnmounted(() => {
 		<main class="stage">
 			<SpectatorTable
 				:view="frame.view ?? null"
-				:zones="frame.zones ?? null"
+				:zones="replayZones"
 				:players="playerInfos"
 				:reveal="frame.reveal ?? null"
 				:card-height="cardHeight"
 				:compact="compact"
+				:show-hands="true"
 				:key="current"
 			/>
+			<div v-if="showChat" class="chat-panel glass">
+				<div class="chat-head">
+					<span>💬 对局聊天</span>
+					<button class="chat-close" @click="showChat = false">✕</button>
+				</div>
+				<div class="chat-list">
+					<div v-if="!replay.chats?.length" class="chat-empty">本局没有聊天记录</div>
+					<div v-for="(m, i) in replay.chats ?? []" :key="`c${m.ts ?? i}`" class="chat-msg">
+						<span class="chat-name">{{ m.name }}</span>
+						<span class="chat-bubble">{{ m.text }}</span>
+					</div>
+				</div>
+			</div>
 		</main>
 
 		<footer class="control-bar">
@@ -168,6 +206,7 @@ onUnmounted(() => {
 					{{ playing ? "⏸" : "▶" }}
 				</button>
 				<button class="ctrl-btn" title="下一帧" @click="next">⏭</button>
+				<button class="ctrl-btn" title="聊天记录" @click="toggleChat">💬</button>
 			</div>
 			<input
 				class="timeline"
@@ -288,6 +327,86 @@ onUnmounted(() => {
 	flex: 1;
 	min-height: 0;
 	padding: 0.5rem 1rem;
+}
+
+.chat-panel {
+	position: absolute;
+	right: 0.8rem;
+	bottom: 0.6rem;
+	z-index: 50;
+	width: 19rem;
+	max-width: calc(100vw - 1.5rem);
+	max-height: 45vh;
+	border-radius: 0.9rem;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.chat-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.5rem 0.75rem;
+	font-size: 0.8rem;
+	font-weight: 800;
+	color: #3a2c1f;
+	border-bottom: 1px solid rgba(107, 84, 56, 0.12);
+}
+
+.chat-close {
+	width: 1.6rem;
+	height: 1.6rem;
+	border-radius: 50%;
+	font-size: 0.8rem;
+	color: #9a7a55;
+	transition: background 0.2s;
+}
+
+.chat-close:hover {
+	background: rgba(0, 0, 0, 0.08);
+}
+
+.chat-list {
+	flex: 1;
+	min-height: 5rem;
+	max-height: calc(45vh - 2.5rem);
+	overflow-y: auto;
+	padding: 0.55rem 0.7rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.chat-empty {
+	text-align: center;
+	color: #a8947b;
+	font-size: 0.75rem;
+	padding: 1rem 0;
+}
+
+.chat-msg {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+	max-width: 95%;
+}
+
+.chat-name {
+	font-size: 0.62rem;
+	font-weight: 700;
+	color: #a8947b;
+}
+
+.chat-bubble {
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: #3a2c1f;
+	background: rgba(255, 255, 255, 0.65);
+	border: 1px solid rgba(255, 255, 255, 0.7);
+	border-radius: 0.6rem;
+	padding: 0.35rem 0.6rem;
+	word-break: break-word;
 }
 
 .control-bar {

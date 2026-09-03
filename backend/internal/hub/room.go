@@ -12,21 +12,44 @@ import (
 
 // Room 房间
 type Room struct {
-	Code            string
-	Mode            string
-	Hub             *Hub
-	Clients         [2]*Client
-	Spectators      []*Client
-	DeckConfig      map[string]int
-	Game            *game.State
-	GameStarted     bool
-	mu              sync.Mutex
-	turnTimer       *time.Timer
-	disconnectTimer *time.Timer
-	rematchVotes    [2]bool
-	replayStarted   time.Time
-	replayFrames    []ReplayFrameMsg
-	replaySent      bool
+	Code              string
+	Mode              string
+	Hub               *Hub
+	Clients           [2]*Client
+	Spectators        []*Client
+	waitingSpectators []*Client
+	chatHistory       []ChatMsgData
+	DeckConfig        map[string]int
+	Game              *game.State
+	GameStarted       bool
+	mu                sync.Mutex
+	turnTimer         *time.Timer
+	disconnectTimer   *time.Timer
+	rematchVotes      [2]bool
+	replayStarted     time.Time
+	replayFrames      []ReplayFrameMsg
+	replaySent        bool
+}
+
+// MAX_CHAT_HISTORY 房间内最多保留的聊天条数
+const MAX_CHAT_HISTORY = 200
+
+// appendChat 追加一条聊天记录(需持有 hub/room 锁)
+func (r *Room) appendChat(from int, name, text string) {
+	r.chatHistory = append(r.chatHistory, ChatMsgData{
+		From: from,
+		Name: name,
+		Text: text,
+		Ts:   time.Now().UnixMilli(),
+	})
+	if len(r.chatHistory) > MAX_CHAT_HISTORY {
+		r.chatHistory = r.chatHistory[len(r.chatHistory)-MAX_CHAT_HISTORY:]
+	}
+}
+
+// chatSnapshot 返回聊天记录副本(供消息/回放使用)
+func (r *Room) chatSnapshot() []ChatMsgData {
+	return append([]ChatMsgData{}, r.chatHistory...)
 }
 
 // paused 对局是否暂停(任一方掉线等待重连)
@@ -57,6 +80,7 @@ func (r *Room) addSpectator(c *Client) {
 	r.Spectators = append(r.Spectators, c)
 	c.room = r
 	c.spectating = true
+	c.waiting = false
 }
 
 // removeSpectator 移除观战(需持有 hub 锁)
@@ -69,18 +93,90 @@ func (r *Room) removeSpectator(c *Client) {
 	}
 	c.room = nil
 	c.spectating = false
+	c.waiting = false
+	c.Close()
+	r.notifySpectatorCount()
+}
+
+// addWaitingSpectator 对局未开始/人数不足时先挂到观战等待列表
+func (r *Room) addWaitingSpectator(c *Client) {
+	r.waitingSpectators = append(r.waitingSpectators, c)
+	c.room = r
+	c.waiting = true
+}
+
+// removeWaitingSpectator 移除观战等待者(需持有 hub 锁)
+func (r *Room) removeWaitingSpectator(c *Client) {
+	for i, sp := range r.waitingSpectators {
+		if sp == c {
+			r.waitingSpectators = append(r.waitingSpectators[:i], r.waitingSpectators[i+1:]...)
+			break
+		}
+	}
+	c.room = nil
+	c.waiting = false
 	c.Close()
 }
 
-// notifySpectatorsClose 通知观战房间关闭(需持有 hub 锁)
+// activateWaitingSpectators 对局开始时把等待观战转为正式观战(需持有 hub 锁)
+func (r *Room) activateWaitingSpectators() {
+	waiting := r.waitingSpectators
+	r.waitingSpectators = nil
+	for _, sp := range waiting {
+		if sp.room != r || sp.waiting == false {
+			continue
+		}
+		r.Spectators = append(r.Spectators, sp)
+		sp.spectating = true
+		sp.waiting = false
+		sp.Send(ServerMessage{
+			Type:           "room_joined",
+			RoomCode:       r.Code,
+			Mode:           r.Mode,
+			PlayerIndex:    -1,
+			Players:        r.playersInfo(),
+			DeckConfig:     r.DeckConfig,
+			Spectator:      true,
+			ChatHistory:    r.chatSnapshot(),
+			SpectatorCount: len(r.Spectators),
+		})
+	}
+	r.notifySpectatorCount()
+}
+
+// notifySpectatorCount 向玩家/观战广播当前观战人数(需持有 hub 锁)
+func (r *Room) notifySpectatorCount() {
+	msg := ServerMessage{Type: "spectator_count", SpectatorCount: len(r.Spectators), RoomCode: r.Code}
+	for _, cl := range r.Clients {
+		if cl != nil && cl.room == r {
+			cl.Send(msg)
+		}
+	}
+	for _, sp := range r.Spectators {
+		if sp.room == r {
+			sp.Send(msg)
+		}
+	}
+}
+
+// notifySpectatorsClose 通知观战/等待观战房间关闭(需持有 hub 锁)
 func (r *Room) notifySpectatorsClose(reason string) {
 	for _, sp := range r.Spectators {
 		sp.Send(ServerMessage{Type: "room_closed", Reason: reason})
 		sp.room = nil
 		sp.spectating = false
+		sp.waiting = false
+		sp.Close()
+	}
+	for _, sp := range r.waitingSpectators {
+		sp.Send(ServerMessage{Type: "room_closed", Reason: reason})
+		sp.room = nil
+		sp.spectating = false
+		sp.waiting = false
 		sp.Close()
 	}
 	r.Spectators = nil
+	r.waitingSpectators = nil
 }
 
 // broadcastSpectatorState 向观战广播公开状态(需持有 hub/room 锁)
@@ -94,11 +190,12 @@ func (r *Room) broadcastSpectatorState(events []game.Event, reveal *RevealMsg) {
 	view.Paused = r.paused()
 	zones := buildSpectatorZones(s, events)
 	msg := ServerMessage{
-		Type:          "spectator_state",
-		SpectatorView: view,
-		Zones:         zones,
-		Events:        evts,
-		Reveal:        reveal,
+		Type:           "spectator_state",
+		SpectatorView:  view,
+		Zones:          zones,
+		Events:         evts,
+		Reveal:         reveal,
+		SpectatorCount: len(r.Spectators),
 	}
 	for _, sp := range r.Spectators {
 		sp.Send(msg)
@@ -115,6 +212,7 @@ func (r *Room) addClient(c *Client, index int) {
 
 // removeClient 移除客户端(需持有 hub 锁)
 func (r *Room) removeClient(c *Client) {
+	r.Hub.removeRoomRecord(r.Code)
 	r.stopTurnTimer()
 	r.stopDisconnectTimer()
 	r.rematchVotes = [2]bool{}
@@ -170,6 +268,7 @@ func (r *Room) removeClient(c *Client) {
 
 // closeAll 关闭房间内所有连接
 func (r *Room) closeAll(reason string) {
+	r.Hub.removeRoomRecord(r.Code)
 	r.stopTurnTimer()
 	r.stopDisconnectTimer()
 	r.rematchVotes = [2]bool{}
@@ -249,6 +348,8 @@ func (r *Room) startGame() {
 	}
 	r.Game = state
 	r.GameStarted = true
+	// 等待观战者在开局这一刻转为正式观战
+	r.activateWaitingSpectators()
 	r.broadcastGameState(events)
 }
 
@@ -320,16 +421,17 @@ func (r *Room) broadcastGameState(events []game.Event, reveal ...*RevealMsg) {
 		evts := buildEventsMsg(events, i, s.CardNames)
 		yourTurn := phasingIndex(s) == i
 		msg := ServerMessage{
-			Type:     "game_state",
-			View:     view,
-			Zones:    zones,
-			Legal:    legal,
-			Events:   evts,
-			Reveal:   revealMsg,
-			YourTurn: yourTurn,
-			GameOver: s.GameEnded != nil,
-			YouWon:   s.GameEnded != nil && s.GameEnded.Winner == i,
-			Paused:   r.paused(),
+			Type:           "game_state",
+			View:           view,
+			Zones:          zones,
+			Legal:          legal,
+			Events:         evts,
+			Reveal:         revealMsg,
+			YourTurn:       yourTurn,
+			GameOver:       s.GameEnded != nil,
+			YouWon:         s.GameEnded != nil && s.GameEnded.Winner == i,
+			Paused:         r.paused(),
+			SpectatorCount: len(r.Spectators),
 		}
 		c.Send(msg)
 	}
@@ -337,6 +439,10 @@ func (r *Room) broadcastGameState(events []game.Event, reveal ...*RevealMsg) {
 	r.broadcastSpectatorState(events, revealMsg)
 	if s.GameEnded != nil {
 		r.sendReplayData()
+		// 对局结束: 房间 KV 记录直接移除
+		r.Hub.removeRoomRecord(r.Code)
+	} else {
+		r.Hub.persistRoomRecord(r)
 	}
 	r.scheduleTurnTimer()
 }

@@ -10,7 +10,7 @@ import AboutOverlay from "../components/AboutOverlay.vue"
 import ReplayViewer from "../components/ReplayViewer.vue"
 
 // 房间状态
-const {state, createRoom, joinRoom, leave, clearMessage} = game
+const {state, createRoom, joinRoom, cancelSpectate, leave, clearMessage, clearError} = game
 
 // 玩家昵称(本地缓存, 避免每次重新输入)
 const NAME_KEY = "cakeduel_name"
@@ -170,15 +170,32 @@ const zeroDeck = () => {
 }
 
 // 加入房间
-const doJoin = () => {
+const doJoin = (as: "player" | "spectator" = "player") => {
 	playSfx("hoof")
 	clearMessage()
 	const C = code.value.trim().toUpperCase()
 	if (!C) return
 	busy.value = true
-	joinRoom(C, name.value.trim() || "神秘玩家")
+	joinRoom(C, name.value.trim() || "神秘玩家", as)
 	window.setTimeout(() => (busy.value = false), 800)
 }
+
+// 加入失败自动返回主菜单的定时器
+let joinErrorTimer: number | undefined
+
+// 房间不存在/已满/已开局: 提示后返回主菜单
+watch(
+	() => state.error,
+	(v) => {
+		if (!v || view.value !== "join") return
+		if (!/不存在|已满|只能观战/.test(v)) return
+		if (joinErrorTimer) window.clearTimeout(joinErrorTimer)
+		joinErrorTimer = window.setTimeout(() => {
+			clearError()
+			view.value = "menu"
+		}, 1600)
+	},
+)
 
 onUnmounted(() => {
 	if (matchTimer) window.clearInterval(matchTimer)
@@ -254,15 +271,19 @@ const replayTime = (replay: ReplayData): string => {
 				<h1 class="title-font">蛋糕对决</h1>
 				<p class="subtitle">绵羊将军，部署你的部队！</p>
 			</div>
-			<div class="panel glass">
-				<div v-if="state.matching" class="menu matching">
-					<div class="match-anim">
-						<span></span><span></span><span></span>
-					</div>
-					<h2 class="panel-title">正在匹配对手…</h2>
-					<p class="match-wait">已等待 {{ matchElapsed }} 秒</p>
-					<button class="ghost-btn" @click="cancelMatch">取消匹配</button>
-				</div>
+	<div class="panel glass">
+		<div v-if="state.matching || state.spectateWait" class="menu matching">
+			<div class="match-anim">
+				<span></span><span></span><span></span>
+			</div>
+			<h2 v-if="state.matching" class="panel-title">正在匹配对手…</h2>
+			<h2 v-else class="panel-title">观战等待中</h2>
+			<p v-if="state.matching" class="match-wait">已等待 {{ matchElapsed }} 秒</p>
+			<p v-else class="match-wait">房间 {{ state.roomCode }} · {{ state.message }}</p>
+			<button class="ghost-btn" @click="state.matching ? cancelMatch() : cancelSpectate()">
+				{{ state.matching ? "取消匹配" : "取消观战" }}
+			</button>
+		</div>
 				<template v-else>
 					<div v-if="view === 'menu'" key="menu" class="menu">
 						<label class="field">
@@ -324,12 +345,18 @@ const replayTime = (replay: ReplayData): string => {
 								class="code-input"
 								maxlength="8"
 								placeholder="例如 ABC123"
-								@keyup.enter="doJoin"
+								@keyup.enter="doJoin('player')"
 							/>
 						</label>
-						<button class="main-btn" :disabled="busy || !code.trim()" @click="doJoin">
-							<span>加入</span>
+						<button class="main-btn" :disabled="busy || !code.trim()" @click="doJoin('player')">
+							<span>加入房间</span>
+							<small>成为玩家，满员/已开局会提示</small>
 						</button>
+						<button class="main-btn accent" :disabled="busy || !code.trim()" @click="doJoin('spectator')">
+							<span>观战</span>
+							<small>已开局直接观战，未开局自动等待</small>
+						</button>
+						<p v-if="state.error" class="join-error">{{ state.error }}</p>
 						<button class="ghost-btn" @click="back">返回</button>
 					</div>
 				</template>
@@ -636,6 +663,13 @@ const replayTime = (replay: ReplayData): string => {
 	font-size: 0.8rem;
 	font-weight: 700;
 	color: #b45309;
+}
+
+.join-error {
+	text-align: center;
+	font-size: 0.78rem;
+	font-weight: 700;
+	color: #dc2626;
 }
 
 .server-warning {
