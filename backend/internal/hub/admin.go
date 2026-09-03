@@ -22,7 +22,8 @@ const (
 
 	adminChallengeTTL = time.Minute
 	adminAuthTTL      = 30 * time.Minute
-	roomRecordTTL     = 6 * time.Hour
+	// 房间实时记录只服务“进行中”对局: 结束即删, 异常残留也应在 10 分钟内过期
+	roomRecordTTL = 10 * time.Minute
 )
 
 // AdminClientView 在线客户端视图

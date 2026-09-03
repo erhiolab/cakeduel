@@ -114,6 +114,36 @@ func (h *Hub) tryAcquireConn() bool {
 	return true
 }
 
+// activeDuplicate 是否存在仍占用席位的同 token 连接(重复标签页等场景)
+// 空闲连接(未进房/未匹配)不视为重复, 允许被新连接覆盖
+func (h *Hub) activeDuplicate(token string) bool {
+	if token == "" {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	old, ok := h.clientsByToken[token]
+	if !ok || old == nil || old.disconnected || old.room == nil {
+		return false
+	}
+	for i := 0; i < 2; i++ {
+		if old.room.Clients[i] == old {
+			return true
+		}
+	}
+	for _, sp := range old.room.Spectators {
+		if sp == old {
+			return true
+		}
+	}
+	for _, sp := range old.room.waitingSpectators {
+		if sp == old {
+			return true
+		}
+	}
+	return false
+}
+
 // registerClient 注册连接; 若 token 对应断线席位则恢复
 func (h *Hub) registerClient(c *Client) {
 	h.mu.Lock()
@@ -422,6 +452,10 @@ func (h *Hub) joinAsPlayer(c *Client, room *Room, msg *ClientMessage) {
 		c.sendError("对局已经开始，只能观战")
 		return
 	}
+	if roomOccupiedByToken(room, c.Token, c) {
+		c.sendError("该房间已有相同账号的连接，无法重复加入")
+		return
+	}
 	if room.Clients[0] != nil && room.Clients[1] != nil {
 		c.sendError("房间已满，无法加入")
 		return
@@ -452,6 +486,10 @@ func (h *Hub) joinAsPlayer(c *Client, room *Room, msg *ClientMessage) {
 func (h *Hub) joinAsSpectator(c *Client, room *Room, msg *ClientMessage) {
 	c.Name = sanitizeName(msg.Name)
 	h.markOnline(c)
+	if roomOccupiedByToken(room, c.Token, c) {
+		c.sendError("该房间已有相同账号的连接，无法重复观战")
+		return
+	}
 	started := room.GameStarted && room.Game != nil && room.Clients[0] != nil && room.Clients[1] != nil
 	if started {
 		room.addSpectator(c)
@@ -482,6 +520,30 @@ func (h *Hub) joinAsSpectator(c *Client, room *Room, msg *ClientMessage) {
 		Players:     room.playersInfo(),
 		Message:     "房间人数不足或对局未开始，等待开局后自动进入观战",
 	})
+}
+
+// roomOccupiedByToken 房间内是否已有同 token 的活跃连接(玩家/观战/等待观战)
+func roomOccupiedByToken(room *Room, token string, except *Client) bool {
+	if token == "" {
+		return false
+	}
+	for i := 0; i < 2; i++ {
+		cl := room.Clients[i]
+		if cl != nil && cl != except && cl.Token == token && !cl.disconnected {
+			return true
+		}
+	}
+	for _, sp := range room.Spectators {
+		if sp != nil && sp != except && sp.Token == token {
+			return true
+		}
+	}
+	for _, sp := range room.waitingSpectators {
+		if sp != nil && sp != except && sp.Token == token {
+			return true
+		}
+	}
+	return false
 }
 
 // StartGame 开始游戏

@@ -128,6 +128,14 @@ func (h *Hub) ServeWS(conn *websocket.Conn, token string) {
 		token = utils.RandomString(24)
 	}
 	c.Token = token
+	// 同 token 已有连接占着房间/观战席位(重复标签页双开): 拒绝并明确提示,
+	// 避免两个连接共用一个身份进入同一房间导致状态错乱/服务卡死
+	if h.activeDuplicate(token) {
+		_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"检测到相同账号已在其他页面进入房间，请先关闭其他页面再重试"}`))
+		_ = conn.Close()
+		return
+	}
 	// 尝试恢复断线席位; 新连接则直接注册
 	h.registerClient(c)
 	go c.writeLoop()
