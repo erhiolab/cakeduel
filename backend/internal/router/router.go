@@ -23,6 +23,9 @@ func Register(r *Router, app *app.App) {
 	// 健康检查
 	r.handleFunc(http.MethodGet, "/ping", PingHandler())
 
+	// 公开房间列表(主界面观战入口)
+	r.handleFunc(http.MethodGet, "/api/rooms", controller.RoomsHandler(app))
+
 	// 游戏 WebSocket
 	r.handleFunc(http.MethodGet, "/ws", GameWSHandler(app))
 
@@ -33,6 +36,8 @@ func Register(r *Router, app *app.App) {
 	r.handleFunc(http.MethodGet, "/api/admin/overview", controller.AdminOverviewHandler(app))
 	r.handleFunc(http.MethodGet, "/api/admin/rooms", controller.AdminRoomsHandler(app))
 	r.handleFunc(http.MethodPost, "/api/admin/rooms/dismiss", controller.AdminDismissHandler(app))
+	r.handleFunc(http.MethodGet, "/api/admin/settings", controller.AdminSettingsHandler(app))
+	r.handleFunc(http.MethodPost, "/api/admin/settings", controller.AdminSettingsUpdateHandler(app))
 
 	// 前端静态资源(可选)
 	staticPath := config.Get().Gateway.StaticPath

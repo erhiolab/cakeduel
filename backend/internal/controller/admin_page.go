@@ -43,6 +43,10 @@ button { cursor:pointer; border:0; border-radius:.5rem; padding:.55rem .9rem; fo
 .chat .from { color:#fcd34d; font-weight:800; }
 .refresh { margin-left:auto; }
 .empty { color:#8d99a6; text-align:center; padding:1.5rem; }
+#focusView { display:none; }
+body.focus #controlCard, body.focus #mainGrid { display:none; }
+body.focus #focusView { display:block; }
+body.focus .wrap { max-width: 900px; }
 </style>
 </head>
 <body>
@@ -52,7 +56,7 @@ button { cursor:pointer; border:0; border-radius:.5rem; padding:.55rem .9rem; fo
 	<div id="headRight"></div>
 </header>
 <div id="login">
-	<div class="card">
+	<div class="card" id="controlCard">
 		<h2 style="font-size:.95rem;margin-bottom:.6rem;">访问密码</h2>
 		<p class="muted" style="margin-bottom:.7rem;">访问后台会在 Redis 生成一个 1 分钟有效的一次性密码（不回显），请管理员自行读取后输入。</p>
 		<div class="banner" id="pwBanner" style="display:none;">
@@ -66,7 +70,17 @@ button { cursor:pointer; border:0; border-radius:.5rem; padding:.55rem .9rem; fo
 	</div>
 </div>
 <div id="dashboard" style="display:none;">
-	<div class="grid2">
+	<div class="card">
+		<div class="row" style="justify-content:space-between;align-items:center;">
+			<b>服务器控制</b>
+			<span id="creationStatus" class="pill ok">创建房间：开启</span>
+		</div>
+		<div class="row" style="margin-top:.55rem;">
+			<button class="btn-ghost" id="toggleCreation">关闭创建房间</button>
+			<span class="muted">已存在的对局不受影响；后端重启后自动恢复开启</span>
+		</div>
+	</div>
+	<div class="grid2" id="mainGrid">
 		<div class="card">
 			<div class="row" style="justify-content:space-between;">
 				<b>在线用户 <span id="onlineCount" class="pill ok">0</span></b>
@@ -79,11 +93,18 @@ button { cursor:pointer; border:0; border-radius:.5rem; padding:.55rem .9rem; fo
 			<div id="roomList" style="margin-top:.5rem;"></div>
 		</div>
 	</div>
+	<div class="card" id="focusView">
+		<div class="row" style="justify-content:space-between;align-items:center;">
+			<b id="focusTitle">关注房间</b>
+			<button class="btn-ghost" id="exitFocusBtn">← 返回房间列表</button>
+		</div>
+		<div id="focusBody" style="margin-top:.6rem;"></div>
+	</div>
 </div>
 </div>
 <script>
 var TOKEN = sessionStorage.getItem("cd_admin_token") || "";
-var state = { online: [], rooms: [] };
+var state = { online: [], rooms: [], creationEnabled: true };
 function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(m){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]; }); }
 function api(path, opt){
 	var headers = Object.assign({}, (opt && opt.headers) || {});
@@ -129,7 +150,11 @@ function renderOnline(){
 	var el = document.getElementById("onlineList");
 	document.getElementById("onlineCount").textContent = state.online.length;
 	el.innerHTML = state.online.length ? "" : '<div class="empty">暂无在线用户</div>';
-	state.online.forEach(function(u){
+	var list = state.online.slice().sort(function(a, b){
+		var n = (a.name || "").localeCompare(b.name || "", "zh-CN");
+		return n !== 0 ? n : (a.id || "").localeCompare(b.id || "");
+	});
+	list.forEach(function(u){
 		var d = document.createElement("div");
 		d.className = "row";
 		d.style.cssText = "margin-top:.4rem;background:#121a24;padding:.4rem .6rem;border-radius:.5rem;";
@@ -141,38 +166,80 @@ function renderOnline(){
 	});
 }
 function roleText(role){ return {player:"玩家", spectator:"观战", waiting_spectator:"观战等待", matching:"匹配中", online:"在线"}[role] || role; }
+function roomCard(r){
+	var playersHtml = (r.players || []).map(function(p){
+		var hand = (p.hand || []).map(function(n){ return '<img src="/cakeduel/cards/zh-CN/' + encodeURIComponent(n) + '.jpg" alt="' + esc(n) + '" title="' + esc(n) + '"/>'; }).join("");
+		return '<div class="player"><div class="head">' +
+			(p.index === r.attackerIndex ? "⚔️" : "🛡️") + " " + esc(p.name || "空位") +
+			'<span class="pill ' + (p.connected ? "ok" : "bad") + '">' + (p.connected ? "在线" : "离线") + "</span>" +
+			"<span class='pill gold'>🍰 " + p.cakes + "</span>" +
+			"<span class='muted' style='margin-left:auto;'>" + p.handCount + " 张</span>" +
+			'</div><div class="hand">' + (hand || '<span class="back">无牌</span>') + "</div></div>";
+	}).join("");
+	var claims = (r.claims || []).map(function(c){ return "<span>" + esc(c) + "</span>"; }).join(" ");
+	var chats = (r.chatHistory || []).map(function(m){ return '<div><span class="from">' + esc(m.name) + ":</span> " + esc(m.text) + "</div>"; }).join("");
+	var followed = state.followCode === r.code;
+	return '<div class="row" style="justify-content:space-between;"><b>🏠 ' + esc(r.code) + "</b>" +
+		'<span class="pill gold">' + esc(r.mode) + "</span>" +
+		"<span class='pill " + (r.paused ? "bad" : "ok") + "'>" + statusText(r) + "</span></div>" +
+		'<div class="row" style="margin-top:.35rem;"><span class="chip">👁 观战 ' + (r.spectatorCount || 0) + "</span>" +
+		"<span class='chip'>第 " + r.roundNumber + " 回合</span>" +
+		"<span class='chip'>比分 " + scoreText(r) + "</span></div>" +
+		'<div class="claims" style="margin-top:.4rem;">' + (claims || '<span class="muted">暂无声明</span>') + "</div>" +
+		playersHtml +
+		'<div class="chat">' + (chats || '<div class="muted">暂无聊天记录</div>') + "</div>" +
+		'<div class="row" style="margin-top:.55rem;">' +
+		'<button class="btn-ghost btn-mini" onclick="followRoom(\'' + esc(r.code) + '\')">' + (followed ? "★ 已关注" : "👁 关注") + "</button>" +
+		'<button class="btn-danger btn-mini" onclick="dismiss(\'' + esc(r.code) + '\')">🗑 强制解散</button></div>';
+}
 function renderRooms(){
 	var el = document.getElementById("roomList");
 	document.getElementById("roomCountTop").textContent = state.rooms.length;
 	el.innerHTML = state.rooms.length ? "" : '<div class="empty">暂无房间</div>';
-	state.rooms.forEach(function(r){
+	var list = state.rooms.slice().sort(function(a, b){ return a.code.localeCompare(b.code); });
+	list.forEach(function(r){
 		var box = document.createElement("div");
 		box.className = "player";
-		var playersHtml = (r.players || []).map(function(p){
-			var hand = (p.hand || []).map(function(n){ return '<img src="/cakeduel/cards/zh-CN/' + encodeURIComponent(n) + '.jpg" alt="' + esc(n) + '" title="' + esc(n) + '"/>'; }).join("");
-			return '<div class="player"><div class="head">' +
-				(p.index === r.attackerIndex ? "⚔️" : "🛡️") + " " + esc(p.name || "空位") +
-				'<span class="pill ' + (p.connected ? "ok" : "bad") + '">' + (p.connected ? "在线" : "离线") + "</span>" +
-				"<span class='pill gold'>🍰 " + p.cakes + "</span>" +
-				"<span class='muted' style='margin-left:auto;'>" + p.handCount + " 张</span>" +
-				'</div><div class="hand">' + (hand || '<span class="back">无牌</span>') + "</div></div>";
-		}).join("");
-		var claims = (r.claims || []).map(function(c){ return "<span>" + esc(c) + "</span>"; }).join(" ");
-		var chats = (r.chatHistory || []).map(function(m){ return '<div><span class="from">' + esc(m.name) + ":</span> " + esc(m.text) + "</div>"; }).join("");
-		box.innerHTML =
-			'<div class="row" style="justify-content:space-between;"><b>🏠 ' + esc(r.code) + "</b>" +
-			'<span class="pill gold">' + esc(r.mode) + "</span>" +
-			"<span class='pill " + (r.paused ? "bad" : "ok") + "'>" + statusText(r) + "</span></div>" +
-			'<div class="row" style="margin-top:.35rem;"><span class="chip">👁 观战 ' + (r.spectatorCount || 0) + "</span>" +
-			"<span class='chip'>第 " + r.roundNumber + " 回合</span>" +
-			"<span class='chip'>比分 " + scoreText(r) + "</span></div>" +
-			'<div class="claims" style="margin-top:.4rem;">' + (claims || '<span class="muted">暂无声明</span>') + "</div>" +
-			playersHtml +
-			'<div class="chat">' + (chats || '<div class="muted">暂无聊天记录</div>') + "</div>" +
-			'<div style="margin-top:.55rem;"><button class="btn-danger btn-mini" onclick="dismiss(\'' + esc(r.code) + '\')">🗑 强制解散</button></div>';
+		box.innerHTML = roomCard(r);
 		el.appendChild(box);
 	});
+	renderFocus();
 }
+function followRoom(code){
+	state.followCode = state.followCode === code ? "" : code;
+	renderRooms();
+	renderFocus();
+}
+function exitFollow(){
+	state.followCode = "";
+	renderFocus();
+}
+function renderFocus(){
+	if (!state.followCode){
+		document.body.classList.remove("focus");
+		return;
+	}
+	document.body.classList.add("focus");
+	document.getElementById("focusTitle").textContent = "👁 关注房间 " + state.followCode;
+	var found = state.rooms.find(function(r){ return r.code === state.followCode; });
+	document.getElementById("focusBody").innerHTML = found
+		? roomCard(found)
+		: '<div class="empty">房间不存在或已关闭<br/><br/><button class="btn-ghost" onclick="exitFollow()">返回房间列表</button></div>';
+}
+function renderSettings(){
+	var el = document.getElementById("creationStatus");
+	el.textContent = "创建房间：" + (state.creationEnabled ? "开启" : "关闭");
+	el.className = "pill " + (state.creationEnabled ? "ok" : "bad");
+	document.getElementById("toggleCreation").textContent = state.creationEnabled ? "关闭创建房间" : "开启创建房间";
+}
+function loadSettings(){ api("/api/admin/settings").then(function(b){ state.creationEnabled = !!b.creationEnabled; renderSettings(); }).catch(function(){}); }
+function toggleCreation(){
+	api("/api/admin/settings", {method:"POST", body: JSON.stringify({creationEnabled: !state.creationEnabled})})
+		.then(function(b){ state.creationEnabled = !!b.creationEnabled; renderSettings(); })
+		.catch(function(e){ alert(e.message); });
+}
+document.getElementById("toggleCreation").addEventListener("click", toggleCreation);
+document.getElementById("exitFocusBtn").addEventListener("click", exitFollow);
 function statusText(r){
 	if (r.gameOver) return "已结束";
 	if (r.status === "playing") return r.paused ? "暂停中" : "对局中";
@@ -188,7 +255,7 @@ function dismiss(code){
 }
 function refreshOnline(){ api("/api/admin/overview").then(function(b){ state.online = b.online || []; renderOnline(); }).catch(function(){}); }
 function refreshRooms(){ api("/api/admin/rooms").then(function(b){ state.rooms = b.rooms || []; renderRooms(); }).catch(function(){}); }
-function refreshAll(){ refreshOnline(); refreshRooms(); }
+function refreshAll(){ refreshOnline(); refreshRooms(); loadSettings(); }
 var autoTimer = null;
 document.getElementById("headRight").innerHTML = '<button class="btn-ghost btn-mini" id="logoutBtn">退出</button>';
 document.getElementById("logoutBtn").addEventListener("click", function(){ TOKEN=""; sessionStorage.removeItem("cd_admin_token"); showLogin(); });

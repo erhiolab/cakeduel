@@ -31,6 +31,45 @@ type Room struct {
 	replaySent        bool
 }
 
+// PublicRoomInfo 主界面可见的公开房间信息(不含手牌/聊天等隐私)
+type PublicRoomInfo struct {
+	Code           string       `json:"code"`
+	Mode           string       `json:"mode"`
+	Status         string       `json:"status"`
+	Phase          string       `json:"phase,omitempty"`
+	Paused         bool         `json:"paused"`
+	GameOver       bool         `json:"gameOver"`
+	Players        []PlayerInfo `json:"players"`
+	SpectatorCount int          `json:"spectatorCount"`
+}
+
+// PublicRooms 公开房间列表(主界面“房间列表/一键观战”用)
+func (h *Hub) PublicRooms() []PublicRoomInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]PublicRoomInfo, 0, len(h.rooms))
+	for _, r := range h.rooms {
+		info := PublicRoomInfo{
+			Code:           r.Code,
+			Mode:           r.Mode,
+			Status:         "waiting",
+			Players:        r.playersInfo(),
+			SpectatorCount: len(r.Spectators),
+		}
+		if r.GameStarted && r.Game != nil {
+			info.Status = "playing"
+			info.Phase = r.Game.Phase
+			info.Paused = r.paused()
+			if r.Game.GameEnded != nil {
+				info.Status = "finished"
+				info.GameOver = true
+			}
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
 // MAX_CHAT_HISTORY 房间内最多保留的聊天条数
 const MAX_CHAT_HISTORY = 200
 

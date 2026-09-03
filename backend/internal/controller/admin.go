@@ -96,6 +96,38 @@ func AdminDismissHandler(app *app.App) http.HandlerFunc {
 	}
 }
 
+// AdminSettingsHandler 读取后台设置(创建房间开关)
+func AdminSettingsHandler(app *app.App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authorizeAdmin(app, w, r) {
+			return
+		}
+		utils.Success(w, map[string]any{
+			"creationEnabled": app.Hub.CreationEnabled(),
+		})
+	}
+}
+
+// AdminSettingsUpdateHandler 更新后台设置(关闭/开启创建房间)
+func AdminSettingsUpdateHandler(app *app.App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authorizeAdmin(app, w, r) {
+			return
+		}
+		var body struct {
+			CreationEnabled bool `json:"creationEnabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			utils.BadRequest(w, "请求格式错误")
+			return
+		}
+		app.Hub.SetCreationEnabled(body.CreationEnabled)
+		utils.Success(w, map[string]any{
+			"creationEnabled": app.Hub.CreationEnabled(),
+		})
+	}
+}
+
 // authorizeAdmin 校验 Bearer 管理员令牌
 func authorizeAdmin(app *app.App, w http.ResponseWriter, r *http.Request) bool {
 	auth := r.Header.Get("Authorization")

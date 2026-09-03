@@ -32,6 +32,7 @@ type Hub struct {
 	idleTimeout     time.Duration
 	rdb             redis.Cmdable
 	closed          bool
+	creationEnabled bool
 }
 
 // NewHub 创建房间中心
@@ -48,6 +49,7 @@ func NewHub(cfg game.GameConfig, rdb redis.Cmdable) *Hub {
 		maxConnections:  1000,
 		idleTimeout:     3 * time.Minute,
 		rdb:             rdb,
+		creationEnabled: true,
 	}
 	// 空闲连接回收与清理定时器
 	go h.cleanupLoop()
@@ -83,6 +85,20 @@ func (h *Hub) SetIdleTimeout(d time.Duration) {
 	if d > 0 {
 		h.idleTimeout = d
 	}
+}
+
+// SetCreationEnabled 设置是否允许创建房间(管理员控制, 后端重启后自动恢复开启)
+func (h *Hub) SetCreationEnabled(enabled bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.creationEnabled = enabled
+}
+
+// CreationEnabled 当前是否允许创建房间
+func (h *Hub) CreationEnabled() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.creationEnabled
 }
 
 // tryAcquireConn 尝试占一个连接名额; 超限返回 false
@@ -279,6 +295,10 @@ func (h *Hub) CreateRoom(c *Client, msg *ClientMessage) {
 	}
 	if c.room != nil || c.matching {
 		c.sendError("你已在房间或匹配队列中")
+		return
+	}
+	if !h.creationEnabled {
+		c.sendError("创建房间已暂停，请联系管理员重新开启")
 		return
 	}
 	name := sanitizeName(msg.Name)

@@ -4,7 +4,7 @@ import {game} from "../composables/useGame"
 import {audioState, playSfx, toggleBgm} from "../game/audio"
 import {appConfig} from "../config"
 import {CARDS, DEFAULT_DECK, SPECIAL_CARD_NAMES} from "../game/cards"
-import {deleteSavedReplay, loadSavedReplays, type ReplayData} from "../composables/useGame"
+import {deleteSavedReplay, loadSavedReplays, type PlayerInfo, type ReplayData} from "../composables/useGame"
 import HelpOverlay from "../components/HelpOverlay.vue"
 import AboutOverlay from "../components/AboutOverlay.vue"
 import ReplayViewer from "../components/ReplayViewer.vue"
@@ -41,6 +41,27 @@ const replays = ref<ReplayData[]>([])
 
 // 正在播放的回放
 const activeReplay = ref<ReplayData | null>(null)
+
+// 公开房间列表类型
+interface PublicRoom {
+	code: string
+	mode: string
+	status: string
+	phase?: string
+	paused: boolean
+	gameOver: boolean
+	players: PlayerInfo[]
+	spectatorCount: number
+}
+
+// 房间列表弹层
+const showRooms = ref(false)
+
+// 房间列表数据
+const rooms = ref<PublicRoom[]>([])
+
+// 房间列表自动刷新定时器
+let roomsTimer: number | undefined
 
 // 匹配状态
 const busy = ref(false)
@@ -200,7 +221,60 @@ watch(
 onUnmounted(() => {
 	if (matchTimer) window.clearInterval(matchTimer)
 	if (pingTimer) window.clearInterval(pingTimer)
+	if (roomsTimer) window.clearInterval(roomsTimer)
 })
+
+// 打开房间列表并开始自动刷新
+const openRooms = async () => {
+	playSfx("hoof")
+	showRooms.value = true
+	await refreshRooms()
+	if (roomsTimer) window.clearInterval(roomsTimer)
+	roomsTimer = window.setInterval(refreshRooms, 5000)
+}
+
+// 关闭房间列表
+const closeRooms = () => {
+	showRooms.value = false
+	if (roomsTimer) window.clearInterval(roomsTimer)
+	roomsTimer = undefined
+}
+
+// 刷新公开房间列表
+const refreshRooms = async () => {
+	try {
+		const RES = await fetch(`${PING_BASE}/api/rooms`, {cache: "no-store"})
+		if (!RES.ok) return
+		const DATA = await RES.json()
+		const ORDER = {waiting: 0, playing: 1, finished: 2} as Record<string, number>
+		rooms.value = (DATA.body?.rooms || []).sort((a: PublicRoom, b: PublicRoom) => {
+			return (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || a.code.localeCompare(b.code)
+		})
+	} catch {
+		// 后端暂时不可达时保留旧列表
+	}
+}
+
+// 一键进入观战
+const enterSpectate = (room: PublicRoom) => {
+	playSfx("hoof")
+	joinRoom(room.code, name.value.trim() || "神秘玩家", "spectator")
+	closeRooms()
+}
+
+// 房间状态文案
+const roomStatusText = (room: PublicRoom): string => {
+	if (room.gameOver) return "已结束"
+	if (room.status === "playing") return room.paused ? "暂停中" : "对局中"
+	return "等待开局"
+}
+
+// 玩家名摘要
+const roomPlayersText = (room: PublicRoom): string => {
+	const NAMES = room.players?.filter((p) => p.name).map((p) => p.name) || []
+	if (NAMES.length === 0) return "等待玩家加入…"
+	return NAMES.join(" vs ")
+}
 
 // 打开回放列表
 const openReplays = () => {
@@ -290,10 +364,6 @@ const replayTime = (replay: ReplayData): string => {
 							<span>你的昵称</span>
 							<input v-model="name" maxlength="12" placeholder="神秘玩家"/>
 						</label>
-						<button class="replay-link" @click="openReplays">
-							<span>🎞 回放录像</span>
-							<small>查看本地保存的最近对局</small>
-						</button>
 						<button class="main-btn" @click="go('create')">
 							<span>创建房间</span>
 							<small>私有房间或随机匹配</small>
@@ -302,7 +372,16 @@ const replayTime = (replay: ReplayData): string => {
 							<span>加入房间</span>
 							<small>输入房间码加入好友</small>
 						</button>
+						<button class="replay-link" @click="openRooms">
+							<span>🏠 房间列表</span>
+							<small>查看当前房间，一键进入观战</small>
+						</button>
+						<button class="replay-link" @click="openReplays">
+							<span>🎞 回放录像</span>
+							<small>查看本地保存的最近对局</small>
+						</button>
 						<p v-if="message" class="message">{{ message }}</p>
+						<p v-if="state.error" class="message error-text">{{ state.error }}</p>
 					</div>
 					<div v-else-if="view === 'create'" key="create" class="menu">
 						<h2 class="panel-title">创建房间</h2>
@@ -365,6 +444,38 @@ const replayTime = (replay: ReplayData): string => {
 		<p v-if="serverDown" class="server-warning">服务器状态异常, 请联系管理员</p>
 		<HelpOverlay :open="showHelp" @close="showHelp = false"/>
 		<AboutOverlay :open="showAbout" @close="showAbout = false"/>
+
+		<Transition name="fade">
+			<div v-if="showRooms" class="rooms-overlay" data-cakeduel-screen="rooms">
+				<div class="rooms-panel glass">
+					<div class="rooms-head">
+						<h2>🏠 房间列表</h2>
+						<div class="rooms-head-actions">
+							<button class="refresh-btn" @click="refreshRooms">刷新</button>
+							<button class="close-btn" @click="closeRooms">✕</button>
+						</div>
+					</div>
+					<p class="rooms-tip">点击「观战」直接进入；房间未开局会自动等待，开局后进入观战</p>
+					<div v-if="rooms.length === 0" class="rooms-empty">
+						<p>暂无房间</p>
+						<small>房间会随对局结束自动移除，稍后刷新看看</small>
+					</div>
+					<div v-else class="rooms-list">
+						<div v-for="room in rooms" :key="room.code" class="rooms-item">
+							<div class="rooms-info">
+								<span class="rooms-code">{{ room.code }}</span>
+								<span class="rooms-sub">
+									<span class="pill" :class="room.status">{{ roomStatusText(room) }}</span>
+									<span class="players-text">{{ roomPlayersText(room) }}</span>
+									<span v-if="room.spectatorCount > 0" class="viewers">👁 {{ room.spectatorCount }}</span>
+								</span>
+							</div>
+							<button class="spectate-btn" @click="enterSpectate(room)">进入观战</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</Transition>
 
 		<Transition name="fade">
 			<div v-if="showReplays && !activeReplay" class="replay-overlay" data-cakeduel-screen="replays">
@@ -672,6 +783,10 @@ const replayTime = (replay: ReplayData): string => {
 	color: #dc2626;
 }
 
+.error-text {
+	color: #dc2626;
+}
+
 .server-warning {
 	position: absolute;
 	bottom: 0.8rem;
@@ -853,6 +968,188 @@ const replayTime = (replay: ReplayData): string => {
 
 .del-btn:hover {
 	background: rgba(220, 38, 38, 0.25);
+}
+
+.rooms-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 120;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1rem;
+	background: rgba(12, 18, 26, 0.72);
+	backdrop-filter: blur(5px);
+}
+
+.rooms-panel {
+	width: 100%;
+	max-width: 32rem;
+	max-height: min(84vh, 40rem);
+	display: flex;
+	flex-direction: column;
+	border-radius: 1.1rem;
+	padding: 1.1rem 1.2rem;
+	overflow: hidden;
+	animation: rise-in 0.3s ease both;
+}
+
+.rooms-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.rooms-head h2 {
+	font-size: 1.15rem;
+	font-weight: 900;
+	color: #3a2c1f;
+}
+
+.rooms-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.refresh-btn {
+	padding: 0.35rem 0.8rem;
+	border-radius: 2rem;
+	font-size: 0.72rem;
+	font-weight: 800;
+	color: #6b4a2b;
+	background: rgba(245, 197, 36, 0.35);
+	transition: background 0.2s;
+}
+
+.refresh-btn:hover {
+	background: rgba(245, 197, 36, 0.6);
+}
+
+.rooms-tip {
+	margin-top: 0.35rem;
+	font-size: 0.68rem;
+	color: #9a7a55;
+	font-weight: 600;
+}
+
+.rooms-empty {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.35rem;
+	padding: 2rem 0;
+	text-align: center;
+}
+
+.rooms-empty p {
+	font-size: 0.95rem;
+	font-weight: 800;
+	color: #6b5438;
+}
+
+.rooms-empty small {
+	font-size: 0.72rem;
+	color: #9a7a55;
+}
+
+.rooms-list {
+	margin-top: 0.7rem;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	flex: 1;
+	min-height: 0;
+	padding-right: 0.15rem;
+}
+
+.rooms-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.6rem;
+	padding: 0.65rem 0.75rem;
+	border-radius: 0.8rem;
+	background: rgba(255, 255, 255, 0.55);
+	border: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.rooms-info {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	min-width: 0;
+}
+
+.rooms-code {
+	font-size: 1rem;
+	font-weight: 900;
+	letter-spacing: 0.18rem;
+	color: #3a2c1f;
+}
+
+.rooms-sub {
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
+	font-size: 0.68rem;
+	font-weight: 600;
+	color: #9a7a55;
+	flex-wrap: wrap;
+}
+
+.rooms-sub .pill {
+	padding: 0.12rem 0.55rem;
+	border-radius: 2rem;
+	font-size: 0.62rem;
+	font-weight: 800;
+}
+
+.rooms-sub .pill.waiting {
+	color: #92400e;
+	background: rgba(245, 197, 36, 0.35);
+}
+
+.rooms-sub .pill.playing {
+	color: #14532d;
+	background: rgba(110, 231, 183, 0.35);
+}
+
+.rooms-sub .pill.finished {
+	color: #6b5438;
+	background: rgba(154, 122, 85, 0.2);
+}
+
+.players-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 12rem;
+}
+
+.viewers {
+	font-weight: 800;
+	color: #0f766e;
+}
+
+.spectate-btn {
+	flex-shrink: 0;
+	padding: 0.5rem 1rem;
+	border-radius: 2rem;
+	font-size: 0.78rem;
+	font-weight: 800;
+	color: #fff;
+	background: linear-gradient(135deg, #0f766e, #115e59);
+	box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
+	transition: transform 0.15s;
+}
+
+.spectate-btn:hover {
+	transform: scale(1.04);
 }
 
 .matching {
