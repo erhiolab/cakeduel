@@ -3,6 +3,8 @@ import {onMounted, ref} from "vue"
 import {game} from "./composables/useGame"
 import {enableAudio} from "./game/audio"
 import {preloadAssets, shouldPreloadAssets} from "./game/assets"
+import ReplayViewer from "./components/ReplayViewer.vue"
+import type {ReplayData} from "./composables/useGame"
 import StartScreen from "./screens/StartScreen.vue"
 import LobbyScreen from "./screens/LobbyScreen.vue"
 import GameScreen from "./screens/GameScreen.vue"
@@ -21,8 +23,21 @@ const cacheDone = ref(0)
 // 缓存总数
 const cacheTotal = ref(0)
 
+// 分享回放数据(/replay/:id)
+const sharedReplay = ref<ReplayData | null>(null)
+
+// 分享回放加载错误
+const sharedError = ref("")
+
 const handleFirstClick = () => {
 	enableAudio()
+}
+
+// 关闭分享回放, 回到主菜单
+const closeShared = () => {
+	sharedReplay.value = null
+	sharedError.value = ""
+	window.history.replaceState(null, "", "/")
 }
 
 onMounted(() => {
@@ -45,6 +60,21 @@ onMounted(() => {
 	if (sessionStorage.getItem("cakeduel_resume")) {
 		game.connect()
 	}
+	// 分享回放链接: /replay/{id}
+	const SHARE_MATCH = window.location.pathname.match(/^\/replay\/([A-Za-z0-9]{6,32})\/?$/)
+	if (SHARE_MATCH) {
+		const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8080" : window.location.origin
+		fetch(`${API_BASE}/api/replay/${SHARE_MATCH[1]}`)
+			.then(async (res) => {
+				if (!res.ok) throw new Error("回放不存在或已过期")
+				const DATA = await res.json()
+				if (!DATA || !Array.isArray(DATA.frames)) throw new Error("回放数据无效")
+				sharedReplay.value = DATA as ReplayData
+			})
+			.catch((e) => {
+				sharedError.value = e.message || "加载失败"
+			})
+	}
 })
 </script>
 
@@ -56,6 +86,20 @@ onMounted(() => {
 		<ResultsScreen v-else-if="state.screen === 'results'" key="results"/>
 		<SpectateScreen v-else-if="state.screen === 'spectate'" key="spectate"/>
 		<LandscapePrompt/>
+		<ReplayViewer
+			v-if="sharedReplay"
+			:replay="sharedReplay"
+			@close="closeShared"
+		/>
+		<Transition name="fade">
+			<div v-if="sharedError" class="shared-error">
+				<div class="shared-error-box glass">
+					<h2>😢 {{ sharedError }}</h2>
+					<p>分享链接 24 小时内有效，过期或已删除则无法查看</p>
+					<button class="shared-back" @click="closeShared">返回主菜单</button>
+				</div>
+			</div>
+		</Transition>
 		<Transition name="fade">
 			<div v-if="caching" class="cache-overlay">
 				<div class="cache-box glass">
@@ -157,6 +201,51 @@ onMounted(() => {
 	font-size: 0.75rem;
 	font-weight: 800;
 	color: #b45309;
+}
+
+.shared-error {
+	position: fixed;
+	inset: 0;
+	z-index: 10020;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1.5rem;
+	background: rgba(20, 25, 35, 0.6);
+	backdrop-filter: blur(5px);
+}
+
+.shared-error-box {
+	max-width: 24rem;
+	width: 100%;
+	border-radius: 1rem;
+	padding: 1.5rem;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.7rem;
+}
+
+.shared-error-box h2 {
+	font-size: 1.2rem;
+	color: #3a2c1f;
+}
+
+.shared-error-box p {
+	font-size: 0.78rem;
+	color: #9a7a55;
+	font-weight: 600;
+}
+
+.shared-back {
+	width: 100%;
+	padding: 0.6rem;
+	border-radius: 0.7rem;
+	font-size: 0.9rem;
+	font-weight: 800;
+	color: #fdf6e9;
+	background: linear-gradient(135deg, #d97706, #b45309);
 }
 
 @keyframes cache-bounce {

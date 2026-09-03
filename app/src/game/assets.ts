@@ -2,7 +2,7 @@ import {CARD_KEYS} from "./cards"
 import {SFX} from "./audio"
 
 // 缓存版本: 资源/路径有变化时递增, 同时同步 public/sw.js 里的 CACHE_NAME
-const CACHE_VERSION = "v0.4.2"
+const CACHE_VERSION = "v0.4.3"
 
 // 浏览器 Cache Storage 名称
 export const ASSET_CACHE_NAME = `cakeduel-assets-${CACHE_VERSION}`

@@ -1,6 +1,6 @@
 // 蛋糕对决资源缓存 Service Worker
 // CACHE_NAME 需与 app/src/game/assets.ts 的 ASSET_CACHE_NAME 保持一致(版本变更时同步)
-const CACHE_NAME = "cakeduel-assets-v0.4.2"
+const CACHE_NAME = "cakeduel-assets-v0.4.3"
 
 // 只缓存同源的静态资源(图片/音频/样式/脚本/字体), 接口请求永远走网络
 const CACHEABLE = new Set(["image", "audio", "script", "style", "font"])

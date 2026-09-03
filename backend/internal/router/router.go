@@ -13,8 +13,9 @@ import (
 // New 创建新的路由
 func New(app *app.App) *Router {
 	return &Router{
-		Routes: make(map[string]map[string]http.Handler),
-		App:    app,
+		Routes:   make(map[string]map[string]http.Handler),
+		Prefixes: make(map[string]map[string]http.Handler),
+		App:      app,
 	}
 }
 
@@ -25,6 +26,10 @@ func Register(r *Router, app *app.App) {
 
 	// 公开房间列表(主界面观战入口)
 	r.handleFunc(http.MethodGet, "/api/rooms", controller.RoomsHandler(app))
+
+	// 分享回放: POST /api/replay/share, GET /api/replay/{id}
+	r.handleFunc(http.MethodPost, "/api/replay/share", controller.ReplayShareHandler(app))
+	r.handlePrefixFunc(http.MethodGet, "/api/replay/", controller.ReplayShareGetHandler(app))
 
 	// 游戏 WebSocket
 	r.handleFunc(http.MethodGet, "/ws", GameWSHandler(app))

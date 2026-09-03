@@ -42,6 +42,12 @@ const replays = ref<ReplayData[]>([])
 // 正在播放的回放
 const activeReplay = ref<ReplayData | null>(null)
 
+// 分享生成中的回放 startedAt
+const sharingId = ref<number | null>(null)
+
+// 最近一次分享信息
+const shareInfo = ref<{id: string; url: string} | null>(null)
+
 // 公开房间列表类型
 interface PublicRoom {
 	code: string
@@ -301,6 +307,35 @@ const watchReplay = (replay: ReplayData) => {
 	activeReplay.value = replay
 }
 
+// 分享回放(后端存 Redis, 24 小时有效)
+const shareReplay = async (replay: ReplayData) => {
+	if (sharingId.value != null) return
+	sharingId.value = replay.startedAt
+	try {
+		const RES = await fetch(`${PING_BASE}/api/replay/share`, {
+			method: "POST",
+			headers: {"Content-Type": "application/json"},
+			body: JSON.stringify(replay),
+		})
+		const DATA = await RES.json()
+		if (!RES.ok || DATA.error) throw new Error(DATA.message || "分享失败")
+		const URL = DATA.body.url.startsWith("http") ? DATA.body.url : `${PING_BASE}${DATA.body.url}`
+		shareInfo.value = {id: DATA.body.id, url: URL}
+		playSfx("hoof")
+	} catch {
+		shareInfo.value = null
+	} finally {
+		sharingId.value = null
+	}
+}
+
+// 复制分享链接
+const copyShareLink = () => {
+	if (!shareInfo.value) return
+	playSfx("hoof")
+	navigator.clipboard?.writeText(shareInfo.value.url).catch(() => {})
+}
+
 // 回放耗时文本
 const replayDuration = (replay: ReplayData): string => {
 	const SECONDS = Math.max(1, Math.round((replay.durationMs ?? 0) / 1000))
@@ -486,6 +521,14 @@ const replayTime = (replay: ReplayData): string => {
 						<button class="close-btn" @click="closeReplays">✕</button>
 					</div>
 					<p class="replay-tip">对局结束后回放会自动保存到本地（最多 10 场）</p>
+					<div v-if="shareInfo" class="share-box">
+						<p class="share-label">🔗 分享链接已生成（24 小时内有效）</p>
+						<div class="share-link">{{ shareInfo.url }}</div>
+						<div class="share-actions">
+							<button class="copy-share" @click="copyShareLink">复制链接</button>
+							<button class="close-share" @click="shareInfo = null">收起</button>
+						</div>
+					</div>
 					<div v-if="replays.length === 0" class="empty">
 						<p>暂无回放</p>
 						<small>打完一局后会自动保存，可随时回来复盘</small>
@@ -501,6 +544,9 @@ const replayTime = (replay: ReplayData): string => {
 							</div>
 							<div class="replay-actions">
 								<button class="watch-btn" @click="watchReplay(replay)">观看</button>
+								<button class="share-btn" :disabled="sharingId != null" @click="shareReplay(replay)">
+									{{ sharingId === replay.startedAt ? "分享中…" : "分享" }}
+								</button>
 								<button class="del-btn" title="删除" @click="removeReplay(replay)">🗑</button>
 							</div>
 						</div>
@@ -867,6 +913,58 @@ const replayTime = (replay: ReplayData): string => {
 	font-weight: 600;
 }
 
+.share-box {
+	margin-top: 0.6rem;
+	border: 1px dashed rgba(107, 84, 56, 0.35);
+	background: rgba(245, 197, 36, 0.12);
+	border-radius: 0.7rem;
+	padding: 0.55rem 0.7rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.share-label {
+	font-size: 0.72rem;
+	font-weight: 800;
+	color: #92400e;
+}
+
+.share-link {
+	font-size: 0.72rem;
+	font-weight: 600;
+	color: #3a2c1f;
+	background: rgba(255, 255, 255, 0.65);
+	border-radius: 0.5rem;
+	padding: 0.45rem 0.6rem;
+	word-break: break-all;
+	user-select: all;
+}
+
+.share-actions {
+	display: flex;
+	gap: 0.5rem;
+}
+
+.copy-share {
+	flex: 1;
+	padding: 0.4rem;
+	border-radius: 2rem;
+	font-size: 0.75rem;
+	font-weight: 800;
+	color: #fff;
+	background: linear-gradient(135deg, #b45309, #92400e);
+}
+
+.close-share {
+	padding: 0.4rem 0.8rem;
+	border-radius: 2rem;
+	font-size: 0.72rem;
+	font-weight: 700;
+	color: #6b5438;
+	background: rgba(0, 0, 0, 0.06);
+}
+
 .empty {
 	flex: 1;
 	display: flex;
@@ -969,6 +1067,25 @@ const replayTime = (replay: ReplayData): string => {
 
 .del-btn:hover {
 	background: rgba(220, 38, 38, 0.25);
+}
+
+.share-btn {
+	padding: 0.4rem 0.8rem;
+	border-radius: 2rem;
+	font-size: 0.74rem;
+	font-weight: 800;
+	color: #14532d;
+	background: rgba(110, 231, 183, 0.3);
+	border: 1px solid rgba(110, 231, 183, 0.45);
+	transition: background 0.2s;
+}
+
+.share-btn:hover {
+	background: rgba(110, 231, 183, 0.5);
+}
+
+.share-btn:disabled {
+	opacity: 0.55;
 }
 
 .rooms-overlay {
