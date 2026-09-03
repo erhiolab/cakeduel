@@ -385,6 +385,7 @@ const replayTime = (replay: ReplayData): string => {
 					</div>
 					<div v-else-if="view === 'create'" key="create" class="menu">
 						<h2 class="panel-title">创建房间</h2>
+						<p v-if="state.error" class="message error-text">{{ state.error }}</p>
 						<button class="main-btn" :disabled="busy" @click="doCreate('private')">
 							<span>创建私有房间</span>
 							<small>{{ deckCustom ? `自定义卡组: ${deckSummary}` : "生成房间码，好友输入即可加入" }}</small>
