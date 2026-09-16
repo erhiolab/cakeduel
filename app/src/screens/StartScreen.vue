@@ -278,7 +278,7 @@ const roomStatusText = (room: PublicRoom): string => {
 // 玩家名摘要
 const roomPlayersText = (room: PublicRoom): string => {
 	const NAMES = room.players?.filter((p) => p.name).map((p) => p.name) || []
-	if (NAMES.length === 0) return "等待玩家加入…"
+	if (NAMES.length === 0) return "等待玩家加入^"
 	return NAMES.join(" vs ")
 }
 
@@ -378,17 +378,17 @@ const replayTime = (replay: ReplayData): string => {
 		<div class="content">
 			<div class="title-block">
 				<h1 class="title-font">蛋糕对决</h1>
-				<p class="subtitle">绵羊将军，部署你的部队！</p>
+				<p class="subtitle">绵羊将军, 部署你的部队! </p>
 			</div>
 	<div class="panel glass">
 		<div v-if="state.matching || state.spectateWait" class="menu matching">
 			<div class="match-anim">
 				<span></span><span></span><span></span>
 			</div>
-			<h2 v-if="state.matching" class="panel-title">正在匹配对手…</h2>
+			<h2 v-if="state.matching" class="panel-title">正在匹配对手^</h2>
 			<h2 v-else class="panel-title">观战等待中</h2>
 			<p v-if="state.matching" class="match-wait">已等待 {{ matchElapsed }} 秒</p>
-			<p v-else class="match-wait">房间 {{ state.roomCode }} · {{ state.message }}</p>
+			<p v-else class="match-wait">房间 {{ state.roomCode }} ` {{ state.message }}</p>
 			<button class="ghost-btn" @click="state.matching ? cancelMatch() : cancelSpectate()">
 				{{ state.matching ? "取消匹配" : "取消观战" }}
 			</button>
@@ -409,7 +409,7 @@ const replayTime = (replay: ReplayData): string => {
 						</button>
 						<button class="replay-link" @click="openRooms">
 							<span>🏠 房间列表</span>
-							<small>查看当前房间，一键进入观战</small>
+							<small>查看当前房间, 一键进入观战</small>
 						</button>
 						<button class="replay-link" @click="openReplays">
 							<span>🎞 回放录像</span>
@@ -423,15 +423,15 @@ const replayTime = (replay: ReplayData): string => {
 						<p v-if="state.error" class="message error-text">{{ state.error }}</p>
 						<button class="main-btn" :disabled="busy" @click="doCreate('private')">
 							<span>创建私有房间</span>
-							<small>{{ deckCustom ? `自定义卡组: ${deckSummary}` : "生成房间码，好友输入即可加入" }}</small>
+							<small>{{ deckCustom ? `自定义卡组: ${deckSummary}` : "生成房间码, 好友输入即可加入" }}</small>
 						</button>
 						<button class="main-btn accent" :disabled="busy" @click="doCreate('random')">
 							<span>随机匹配</span>
-							<small>匹配同样选择了随机的玩家（经典卡组）</small>
+							<small>匹配同样选择了随机的玩家(经典卡组)</small>
 						</button>
 
 						<button class="ghost-btn deck-toggle" @click="toggleDeck">
-							{{ deckCustom ? "收起卡组配置" : "自定义卡组（特殊卡数量）" }}
+							{{ deckCustom ? "收起卡组配置" : "自定义卡组(特殊卡数量)" }}
 						</button>
 						<div v-if="deckCustom" class="deck-editor">
 							<div v-for="name in SPECIAL_CARD_NAMES" :key="name" class="deck-row">
@@ -442,7 +442,7 @@ const replayTime = (replay: ReplayData): string => {
 									<button class="step-btn" @click="changeDeck(name, 1)">＋</button>
 								</div>
 							</div>
-							<p v-if="deckZero" class="deck-zero">全部为 0：本局不使用特殊卡</p>
+							<p v-if="deckZero" class="deck-zero">全部为 0: 本局不使用特殊卡</p>
 							<div class="deck-presets">
 								<button class="preset-btn" @click="resetDeck">经典</button>
 								<button class="preset-btn" @click="zeroDeck">无特殊卡</button>
@@ -465,11 +465,11 @@ const replayTime = (replay: ReplayData): string => {
 						</label>
 						<button class="main-btn" :disabled="busy || !code.trim()" @click="doJoin('player')">
 							<span>加入房间</span>
-							<small>成为玩家，满员/已开局会提示</small>
+							<small>成为玩家, 满员/已开局会提示</small>
 						</button>
 						<button class="main-btn accent" :disabled="busy || !code.trim()" @click="doJoin('spectator')">
 							<span>观战</span>
-							<small>已开局直接观战，未开局自动等待</small>
+							<small>已开局直接观战, 未开局自动等待</small>
 						</button>
 						<p v-if="state.error" class="join-error">{{ state.error }}</p>
 						<button class="ghost-btn" @click="back">返回</button>
@@ -491,10 +491,10 @@ const replayTime = (replay: ReplayData): string => {
 							<button class="close-btn" @click="closeRooms">✕</button>
 						</div>
 					</div>
-					<p class="rooms-tip">点击「观战」直接进入；房间未开局会自动等待，开局后进入观战</p>
+					<p class="rooms-tip">点击'观战'直接进入; 房间未开局会自动等待, 开局后进入观战</p>
 					<div v-if="rooms.length === 0" class="rooms-empty">
 						<p>暂无房间</p>
-						<small>房间会随对局结束自动移除，稍后刷新看看</small>
+						<small>房间会随对局结束自动移除, 稍后刷新看看</small>
 					</div>
 					<div v-else class="rooms-list">
 						<div v-for="room in rooms" :key="room.code" class="rooms-item">
@@ -520,9 +520,9 @@ const replayTime = (replay: ReplayData): string => {
 						<h2>🎞 回放录像</h2>
 						<button class="close-btn" @click="closeReplays">✕</button>
 					</div>
-					<p class="replay-tip">对局结束后回放会自动保存到本地（最多 10 场）</p>
+					<p class="replay-tip">对局结束后回放会自动保存到本地(最多 10 场)</p>
 					<div v-if="shareInfo" class="share-box">
-						<p class="share-label">🔗 分享链接已生成（24 小时内有效）</p>
+						<p class="share-label">🔗 分享链接已生成(24 小时内有效)</p>
 						<div class="share-link">{{ shareInfo.url }}</div>
 						<div class="share-actions">
 							<button class="copy-share" @click="copyShareLink">复制链接</button>
@@ -531,21 +531,21 @@ const replayTime = (replay: ReplayData): string => {
 					</div>
 					<div v-if="replays.length === 0" class="empty">
 						<p>暂无回放</p>
-						<small>打完一局后会自动保存，可随时回来复盘</small>
+						<small>打完一局后会自动保存, 可随时回来复盘</small>
 					</div>
 					<div v-else class="replay-list">
 						<div v-for="replay in replays" :key="replay.startedAt" class="replay-item">
 							<div class="replay-info">
 								<span class="names">{{ replay.playerNames?.[0] || "玩家A" }} vs {{ replay.playerNames?.[1] || "玩家B" }}</span>
 								<span class="sub">
-									{{ replayTime(replay) }} · 用时 {{ replayDuration(replay) }} ·
+									{{ replayTime(replay) }} ` 用时 {{ replayDuration(replay) }} `
 									🏆 {{ replay.playerNames?.[replay.winner] || `玩家 ${(replay.winner ?? 0) + 1}` }} 获胜
 								</span>
 							</div>
 							<div class="replay-actions">
 								<button class="watch-btn" @click="watchReplay(replay)">观看</button>
 								<button class="share-btn" :disabled="sharingId != null" @click="shareReplay(replay)">
-									{{ sharingId === replay.startedAt ? "分享中…" : "分享" }}
+									{{ sharingId === replay.startedAt ? "分享中^" : "分享" }}
 								</button>
 								<button class="del-btn" title="删除" @click="removeReplay(replay)">🗑</button>
 							</div>

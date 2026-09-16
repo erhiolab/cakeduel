@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import {onMounted, ref} from "vue"
+import {onMounted, onUnmounted, ref} from "vue"
 import {game} from "./composables/useGame"
+import {setupAutoFullscreen} from "./composables/useFullscreen"
 import {enableAudio} from "./game/audio"
 import {preloadAssets, shouldPreloadAssets} from "./game/assets"
 import ReplayViewer from "./components/ReplayViewer.vue"
@@ -29,6 +30,9 @@ const sharedReplay = ref<ReplayData | null>(null)
 // 分享回放加载错误
 const sharedError = ref("")
 
+// 自动全屏的清理函数
+let disposeFullscreen: (() => void) | undefined
+
 const handleFirstClick = () => {
 	enableAudio()
 }
@@ -42,6 +46,8 @@ const closeShared = () => {
 
 onMounted(() => {
 	window.addEventListener("pointerdown", handleFirstClick, {once: true})
+	// 移动端首次操作时自动进入全屏(浏览器要求全屏必须由用户手势触发)
+	disposeFullscreen = setupAutoFullscreen()
 	// 注册资源缓存 Service Worker(生产/后端托管环境)
 	if (!import.meta.env.DEV && "serviceWorker" in navigator) {
 		void navigator.serviceWorker.register("/sw.js").catch(() => {})
@@ -75,6 +81,10 @@ onMounted(() => {
 				sharedError.value = e.message || "加载失败"
 			})
 	}
+})
+
+onUnmounted(() => {
+	disposeFullscreen?.()
 })
 </script>
 
